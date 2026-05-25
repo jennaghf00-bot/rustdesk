@@ -16,6 +16,7 @@ import 'package:flutter_hbb/desktop/widgets/update_progress.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/server_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
+import 'package:flutter_hbb/private_device_binding.dart';
 import 'package:flutter_hbb/plugin/ui_manager.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_hbb/utils/platform_channel.dart';
@@ -93,6 +94,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       buildTip(context),
       if (!isOutgoingOnly) buildIDBoard(context),
       if (!isOutgoingOnly) buildPasswordBoard(context),
+      if (!isOutgoingOnly) buildPrivateBindingButton(context),
       FutureBuilder<Widget>(
         future: Future.value(
             Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
@@ -175,6 +177,21 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 ),
               )
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget buildPrivateBindingButton(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 20, right: 16, bottom: 8),
+      child: SizedBox(
+        width: double.infinity,
+        height: 34,
+        child: OutlinedButton.icon(
+          icon: const Icon(Icons.verified_user_outlined, size: 16),
+          label: const Text('绑定企业设备'),
+          onPressed: showPrivateDeviceBindingDialog,
         ),
       ),
     );
