@@ -104,7 +104,7 @@ void showPrivateDeviceBindingDialog() {
             controller: apiController,
             decoration: const InputDecoration(
               labelText: '管理后台 API',
-              hintText: 'http://127.0.0.1:4000',
+              hintText: 'http://rustdesk-console.example.com',
             ),
           ).workaroundFreezeLinuxMint(),
           const SizedBox(height: 12),
@@ -162,10 +162,18 @@ Future<PrivateDeviceConfig> consumePrivateBindingCode(
 }
 
 String normalizePrivateApiBase(String apiBase) {
-  if (apiBase.endsWith('/')) {
-    return apiBase.substring(0, apiBase.length - 1);
+  var normalized = apiBase.trim();
+  while (normalized.endsWith('/')) {
+    normalized = normalized.substring(0, normalized.length - 1);
   }
-  return apiBase;
+  const bindingPath = '/api/bindings/consume';
+  if (normalized.endsWith(bindingPath)) {
+    normalized = normalized.substring(0, normalized.length - bindingPath.length);
+  }
+  if (normalized.endsWith('/api')) {
+    normalized = normalized.substring(0, normalized.length - 4);
+  }
+  return normalized;
 }
 
 String bindingErrorMessage(String body) {
