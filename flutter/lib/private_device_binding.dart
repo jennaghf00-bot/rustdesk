@@ -13,6 +13,7 @@ class PrivateDeviceConfig {
   final String unattendedPassword;
   final String hbbsAddress;
   final String hbbrAddress;
+  final String serverKey;
   final String serverAddress;
 
   PrivateDeviceConfig({
@@ -20,6 +21,7 @@ class PrivateDeviceConfig {
     required this.unattendedPassword,
     required this.hbbsAddress,
     required this.hbbrAddress,
+    required this.serverKey,
     required this.serverAddress,
   });
 
@@ -29,6 +31,7 @@ class PrivateDeviceConfig {
       unattendedPassword: json['unattendedPassword'] as String? ?? '',
       hbbsAddress: json['hbbsAddress'] as String? ?? '',
       hbbrAddress: json['hbbrAddress'] as String? ?? '',
+      serverKey: json['serverKey'] as String? ?? '',
       serverAddress: json['serverAddress'] as String? ?? '',
     );
   }
@@ -182,6 +185,7 @@ Future<String> applyPrivateDeviceConfig(
     value: config.hbbsAddress,
   );
   await bind.mainSetOption(key: 'relay-server', value: config.hbbrAddress);
+  await bind.mainSetOption(key: 'key', value: config.serverKey);
   await bind.mainSetOption(key: kOptionApproveMode, value: 'password');
   await bind.mainSetOption(
     key: kOptionVerificationMethod,
