@@ -242,20 +242,66 @@ Future<String> applyPrivateDeviceConfig(
   if (status == ' ') {
     return 'Timed out';
   }
-  if (status == 'server_not_support' || status == 'Unknown Error') {
-    await persistPrivateRemoteIdFallback(config.remoteId);
+
+  if (status.isEmpty) {
+    await Future.delayed(const Duration(milliseconds: 500));
+    final changedId = await bind.mainGetMyId();
+    if (changedId == config.remoteId) {
+      return '';
+    }
+  }
+
+  if (status.isEmpty ||
+      status == 'server_not_support' ||
+      status == 'Unknown Error') {
+    final persisted = await persistPrivateRemoteIdFallback(config.remoteId);
+    if (!persisted) {
+      return 'Failed to persist remote ID';
+    }
+    await Future.delayed(const Duration(seconds: 1));
+    await gFFI.serverModel.fetchID();
     return '';
   }
   return status;
 }
 
-Future<void> persistPrivateRemoteIdFallback(String remoteId) async {
-  if (!Platform.isWindows) return;
+Future<bool> persistPrivateRemoteIdFallback(String remoteId) async {
+  if (!Platform.isWindows) return false;
 
   final appData = Platform.environment['APPDATA'];
-  if (appData == null || appData.isEmpty) return;
+  final programData = Platform.environment['PROGRAMDATA'];
+  final paths = <String>[
+    if (appData != null && appData.isNotEmpty)
+      '$appData\\RustDesk\\config\\RustDesk.toml',
+    if (programData != null && programData.isNotEmpty)
+      '$programData\\RustDesk\\config\\RustDesk.toml',
+    'C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Roaming\\RustDesk\\config\\RustDesk.toml',
+  ];
 
-  final configFile = File('$appData\\RustDesk\\config\\RustDesk.toml');
+  var wroteConfig = false;
+  for (final path in paths) {
+    try {
+      await writePrivateRemoteIdConfig(File(path), remoteId);
+      wroteConfig = true;
+    } catch (error) {
+      debugPrint('failed to persist private remote id at $path: $error');
+    }
+  }
+
+  if (!wroteConfig) return false;
+
+  try {
+    await bind.mainStopService();
+    await Future.delayed(const Duration(milliseconds: 500));
+    await bind.mainStartService();
+  } catch (error) {
+    debugPrint(
+        'failed to restart RustDesk service after private id fallback: $error');
+  }
+  return true;
+}
+
+Future<void> writePrivateRemoteIdConfig(File configFile, String remoteId) async {
   await configFile.parent.create(recursive: true);
   var content = '';
   if (await configFile.exists()) {
@@ -280,14 +326,6 @@ Future<void> persistPrivateRemoteIdFallback(String remoteId) async {
   }
 
   await configFile.writeAsString('$content\r\n');
-  try {
-    await bind.mainStopService();
-    await Future.delayed(const Duration(milliseconds: 500));
-    await bind.mainStartService();
-  } catch (error) {
-    debugPrint(
-        'failed to restart RustDesk service after private id fallback: $error');
-  }
 }
 
 const String kPrivateSettingsPasswordOption = 'private-settings-password';
