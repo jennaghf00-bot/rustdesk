@@ -823,22 +823,6 @@ class _PrivilegeBoardState extends State<_PrivilegeBoard> {
                           translate('Enable blocking user input'),
                           canModify: canModifyPermission,
                         ),
-                      if (bind.mainSupportedPrivacyModeImpls() != '[]')
-                        buildPermissionIcon(
-                          client.privacyMode,
-                          Icons.visibility_off,
-                          (enabled) {
-                            bind.cmSwitchPermission(
-                                connId: client.id,
-                                name: "privacy_mode",
-                                enabled: enabled);
-                            setState(() {
-                              client.privacyMode = enabled;
-                            });
-                          },
-                          translate('Enable privacy mode'),
-                          canModify: canModifyPermission,
-                        )
                     ],
             ),
           ),

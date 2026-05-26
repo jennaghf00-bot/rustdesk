@@ -11,6 +11,7 @@ import 'package:flutter_hbb/utils/http_service.dart' as http;
 class PrivateDeviceConfig {
   final String remoteId;
   final String unattendedPassword;
+  final String settingsPassword;
   final String hbbsAddress;
   final String hbbrAddress;
   final String serverKey;
@@ -19,6 +20,7 @@ class PrivateDeviceConfig {
   PrivateDeviceConfig({
     required this.remoteId,
     required this.unattendedPassword,
+    required this.settingsPassword,
     required this.hbbsAddress,
     required this.hbbrAddress,
     required this.serverKey,
@@ -29,6 +31,7 @@ class PrivateDeviceConfig {
     return PrivateDeviceConfig(
       remoteId: json['remoteId'] as String? ?? '',
       unattendedPassword: json['unattendedPassword'] as String? ?? '',
+      settingsPassword: json['settingsPassword'] as String? ?? '',
       hbbsAddress: json['hbbsAddress'] as String? ?? '',
       hbbrAddress: json['hbbrAddress'] as String? ?? '',
       serverKey: json['serverKey'] as String? ?? '',
@@ -38,6 +41,14 @@ class PrivateDeviceConfig {
 }
 
 void showPrivateDeviceBindingDialog() {
+  if (hasPrivateSettingsPassword()) {
+    verifyPrivateSettingsPassword(
+      title: '验证二级密码',
+      onVerified: showPrivateDeviceBindingDialog,
+    );
+    return;
+  }
+
   final apiController = TextEditingController();
   final codeController = TextEditingController();
   var message = '';
@@ -186,6 +197,7 @@ Future<String> applyPrivateDeviceConfig(
   );
   await bind.mainSetOption(key: 'relay-server', value: config.hbbrAddress);
   await bind.mainSetOption(key: 'key', value: config.serverKey);
+  await bind.mainSetOption(key: kOptionEnablePrivacyMode, value: 'N');
   await bind.mainSetOption(key: kOptionApproveMode, value: 'password');
   await bind.mainSetOption(
     key: kOptionVerificationMethod,
@@ -197,6 +209,13 @@ Future<String> applyPrivateDeviceConfig(
   );
   if (!passwordOk) {
     throw Exception('无人值守密码设置失败');
+  }
+
+  if (config.settingsPassword.isNotEmpty) {
+    await bind.mainSetLocalOption(
+      key: kPrivateSettingsPasswordOption,
+      value: config.settingsPassword,
+    );
   }
 
   final currentId = await bind.mainGetMyId();
@@ -215,9 +234,109 @@ Future<String> applyPrivateDeviceConfig(
   if (status == ' ') {
     return 'Timed out';
   }
-  if (status == 'server_not_support' || status == 'Unknown error') {
-    await bind.mainSetOption(key: 'id', value: config.remoteId);
+  if (status == 'server_not_support' || status == 'Unknown Error') {
+    await persistPrivateRemoteIdFallback(config.remoteId);
     return '';
   }
   return status;
+}
+
+Future<void> persistPrivateRemoteIdFallback(String remoteId) async {
+  if (!Platform.isWindows) return;
+
+  final appData = Platform.environment['APPDATA'];
+  if (appData == null || appData.isEmpty) return;
+
+  final configFile = File('$appData\\RustDesk\\config\\RustDesk.toml');
+  await configFile.parent.create(recursive: true);
+  var content = '';
+  if (await configFile.exists()) {
+    content = await configFile.readAsString();
+  }
+
+  final escapedId = remoteId.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+  if (RegExp(r'^id\s*=', multiLine: true).hasMatch(content)) {
+    content = content.replaceAll(
+        RegExp(r'^id\s*=.*$', multiLine: true), 'id = "$escapedId"');
+  } else {
+    content = content.trimRight();
+    content =
+        content.isEmpty ? 'id = "$escapedId"' : '$content\r\nid = "$escapedId"';
+  }
+
+  if (RegExp(r'^enc_id\s*=', multiLine: true).hasMatch(content)) {
+    content = content.replaceAll(
+        RegExp(r'^enc_id\s*=.*$', multiLine: true), 'enc_id = ""');
+  } else {
+    content = '$content\r\nenc_id = ""';
+  }
+
+  await configFile.writeAsString('$content\r\n');
+  try {
+    await bind.mainStopService();
+    await Future.delayed(const Duration(milliseconds: 500));
+    await bind.mainStartService();
+  } catch (error) {
+    debugPrint(
+        'failed to restart RustDesk service after private id fallback: $error');
+  }
+}
+
+const String kPrivateSettingsPasswordOption = 'private-settings-password';
+
+bool hasPrivateSettingsPassword() {
+  return bind
+      .mainGetLocalOption(key: kPrivateSettingsPasswordOption)
+      .isNotEmpty;
+}
+
+bool isPrivateSettingsPasswordValid(String password) {
+  return password ==
+      bind.mainGetLocalOption(key: kPrivateSettingsPasswordOption);
+}
+
+void verifyPrivateSettingsPassword({
+  required String title,
+  required VoidCallback onVerified,
+}) {
+  final controller = TextEditingController();
+  var message = '';
+
+  gFFI.dialogManager.show((setState, close, context) {
+    void submit() {
+      if (isPrivateSettingsPasswordValid(controller.text)) {
+        close();
+        onVerified();
+        return;
+      }
+      setState(() {
+        message = '二级密码不正确';
+      });
+    }
+
+    return CustomAlertDialog(
+      title: Text(title),
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: controller,
+            obscureText: true,
+            decoration: const InputDecoration(labelText: '二级密码'),
+          ).workaroundFreezeLinuxMint(),
+          if (message.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(message, style: const TextStyle(color: Colors.redAccent)),
+          ],
+        ],
+      ),
+      actions: [
+        dialogButton('Cancel', onPressed: close, isOutline: true),
+        dialogButton('OK', onPressed: submit),
+      ],
+      onSubmit: submit,
+      onCancel: close,
+    );
+  });
 }

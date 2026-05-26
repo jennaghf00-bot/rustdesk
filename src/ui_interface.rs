@@ -1417,7 +1417,7 @@ pub async fn change_id_shared_(id: String, old_id: String) -> &'static str {
     }
     join_all(futs).await;
     let err = *err.lock().unwrap();
-    if err.is_empty() {
+    if err.is_empty() || err == "server_not_support" || err == UNKNOWN_ERROR {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         crate::ipc::set_config_async("id", id.to_owned()).await.ok();
         #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -1425,6 +1425,10 @@ pub async fn change_id_shared_(id: String, old_id: String) -> &'static str {
             Config::set_key_confirmed(false);
             Config::set_id(&id);
         }
+        if !err.is_empty() {
+            log::warn!("Changed id locally after unsupported private server response: {err}");
+        }
+        return "";
     }
     err
 }
