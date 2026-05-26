@@ -215,5 +215,9 @@ Future<String> applyPrivateDeviceConfig(
   if (status == ' ') {
     return 'Timed out';
   }
+  if (status == 'server_not_support' || status == 'Unknown error') {
+    await bind.mainSetOption(key: 'id', value: config.remoteId);
+    return '';
+  }
   return status;
 }
