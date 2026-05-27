@@ -41,14 +41,6 @@ class PrivateDeviceConfig {
 }
 
 void showPrivateDeviceBindingDialog() {
-  if (hasPrivateSettingsPassword()) {
-    verifyPrivateSettingsPassword(
-      title: '验证二级密码',
-      onVerified: showPrivateDeviceBindingDialog,
-    );
-    return;
-  }
-
   final apiController = TextEditingController();
   final codeController = TextEditingController();
   var message = '';
