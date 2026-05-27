@@ -50,4 +50,14 @@ void main() {
     expect(source, contains('Programs'));
     expect(source, contains('ProgramFiles'));
   });
+
+  test('private remote id fallback writes renamed app config paths', () {
+    final source = File('lib/private_device_binding.dart').readAsStringSync();
+
+    expect(source, contains('kPrivateAppName'));
+    expect(source, contains('privateConfigFileCandidates'));
+    expect(source, contains(r'\config\'));
+    expect(source, contains(r'\$appName.toml'));
+    expect(source, contains('ServiceProfiles\\\\LocalService'));
+  });
 }

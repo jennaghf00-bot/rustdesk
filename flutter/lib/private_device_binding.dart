@@ -60,6 +60,7 @@ class PrivateProvisionConfig {
 const String kPrivateProvisionFileName = 'rustdesk-private-provision.json';
 const String kPrivateClientModeOption = 'private-client-mode';
 const String kPrivateClientModeControlled = 'controlled';
+const String kPrivateAppName = '\u4f17\u535a\u4fe1AOI\u8fdc\u7a0b\u8fde\u63a5';
 
 bool isPrivateControlledClient() {
   return bind.mainGetLocalOption(key: kPrivateClientModeOption) ==
@@ -117,13 +118,17 @@ List<File> privateProvisionCandidateFiles() {
   ]) {
     final root = environment[key];
     if (root == null || root.isEmpty) continue;
-    candidates.add(
-      '$root${Platform.pathSeparator}RustDesk${Platform.pathSeparator}$kPrivateProvisionFileName',
-    );
-    if (key == 'LOCALAPPDATA') {
+    for (final appName in ['RustDesk', kPrivateAppName]) {
       candidates.add(
-        '$root${Platform.pathSeparator}Programs${Platform.pathSeparator}RustDesk${Platform.pathSeparator}$kPrivateProvisionFileName',
+        '$root${Platform.pathSeparator}$appName${Platform.pathSeparator}$kPrivateProvisionFileName',
       );
+    }
+    if (key == 'LOCALAPPDATA') {
+      for (final appName in ['RustDesk', kPrivateAppName]) {
+        candidates.add(
+          '$root${Platform.pathSeparator}Programs${Platform.pathSeparator}$appName${Platform.pathSeparator}$kPrivateProvisionFileName',
+        );
+      }
     }
   }
   return candidates.toSet().map(File.new).toList();
@@ -371,13 +376,7 @@ Future<bool> persistPrivateRemoteIdFallback(String remoteId) async {
 
   final appData = Platform.environment['APPDATA'];
   final programData = Platform.environment['PROGRAMDATA'];
-  final paths = <String>[
-    if (appData != null && appData.isNotEmpty)
-      '$appData\\RustDesk\\config\\RustDesk.toml',
-    if (programData != null && programData.isNotEmpty)
-      '$programData\\RustDesk\\config\\RustDesk.toml',
-    'C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Roaming\\RustDesk\\config\\RustDesk.toml',
-  ];
+  final paths = privateConfigFileCandidates(appData, programData);
 
   var wroteConfig = false;
   for (final path in paths) {
@@ -393,6 +392,22 @@ Future<bool> persistPrivateRemoteIdFallback(String remoteId) async {
 
   await restartPrivateRustDeskService();
   return true;
+}
+
+List<String> privateConfigFileCandidates(String? appData, String? programData) {
+  final paths = <String>[];
+  for (final appName in ['RustDesk', kPrivateAppName]) {
+    if (appData != null && appData.isNotEmpty) {
+      paths.add('$appData\\$appName\\config\\$appName.toml');
+    }
+    if (programData != null && programData.isNotEmpty) {
+      paths.add('$programData\\$appName\\config\\$appName.toml');
+    }
+    paths.add(
+      'C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Roaming\\$appName\\config\\$appName.toml',
+    );
+  }
+  return paths.toSet().toList();
 }
 
 Future<void> writePrivateRemoteIdConfig(File configFile, String remoteId) async {
