@@ -21,15 +21,23 @@ void main() {
 
   test('private binding restarts service after successful id change', () {
     final source = File('lib/private_device_binding.dart').readAsStringSync();
-    final successCheck = source.indexOf('if (changedId == config.remoteId)');
-    expect(successCheck, isNot(-1));
+    final functionStart = source.indexOf('Future<String> applyPrivateDeviceConfig(');
+    expect(functionStart, isNot(-1));
 
-    final successReturn = source.indexOf("return '';", successCheck);
-    expect(successReturn, isNot(-1));
+    final nextFunction = source.indexOf('Future<void> restartPrivateRustDeskService()', functionStart);
+    expect(nextFunction, isNot(-1));
 
-    final successBody = source.substring(successCheck, successReturn);
-    expect(successBody, contains('restartPrivateRustDeskService()'));
-    expect(successBody, contains('gFFI.serverModel.fetchID()'));
+    final functionBody = source.substring(functionStart, nextFunction);
+    expect(functionBody, isNot(contains('mainChangeId')));
+    expect(functionBody, isNot(contains('persistPrivateRemoteIdFallback')));
+    expect(functionBody, contains('gFFI.serverModel.fetchID()'));
+  });
+
+  test('private client defaults to controlled mode without provision json', () {
+    final source = File('lib/private_device_binding.dart').readAsStringSync();
+
+    expect(source, contains('kPrivateControlledClientByDefault'));
+    expect(source, contains('if (mode.isEmpty) return kPrivateControlledClientByDefault;'));
   });
 
   test('private provision is loaded from the application working directory', () {

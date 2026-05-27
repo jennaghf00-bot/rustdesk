@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -60,11 +60,13 @@ class PrivateProvisionConfig {
 const String kPrivateProvisionFileName = 'rustdesk-private-provision.json';
 const String kPrivateClientModeOption = 'private-client-mode';
 const String kPrivateClientModeControlled = 'controlled';
+const bool kPrivateControlledClientByDefault = true;
 const String kPrivateAppName = '\u4f17\u535a\u4fe1AOI\u8fdc\u7a0b\u8fde\u63a5';
 
 bool isPrivateControlledClient() {
-  return bind.mainGetLocalOption(key: kPrivateClientModeOption) ==
-      kPrivateClientModeControlled;
+  final mode = bind.mainGetLocalOption(key: kPrivateClientModeOption);
+  if (mode.isEmpty) return kPrivateControlledClientByDefault;
+  return mode == kPrivateClientModeControlled;
 }
 
 Future<bool> applyPrivateProvisionIfPresent() async {
@@ -154,7 +156,7 @@ void showPrivateDeviceBindingDialog() {
 
       if (apiBase.isEmpty || code.isEmpty) {
         setState(() {
-          message = 'API 地址和绑定码不能为空';
+          message = 'API 鍦板潃鍜岀粦瀹氱爜涓嶈兘涓虹┖';
         });
         return;
       }
@@ -177,7 +179,7 @@ void showPrivateDeviceBindingDialog() {
 
         await gFFI.serverModel.fetchID();
         await gFFI.serverModel.updatePasswordModel();
-        showToast('绑定成功');
+        showToast('缁戝畾鎴愬姛');
         close();
       } catch (error) {
         setState(() {
@@ -188,7 +190,7 @@ void showPrivateDeviceBindingDialog() {
     }
 
     return CustomAlertDialog(
-      title: Text('绑定企业设备'),
+      title: Text('缁戝畾浼佷笟璁惧'),
       content: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -196,7 +198,7 @@ void showPrivateDeviceBindingDialog() {
           TextField(
             controller: apiController,
             decoration: const InputDecoration(
-              labelText: '管理后台 API',
+              labelText: '绠＄悊鍚庡彴 API',
               hintText: 'http://rustdesk-console.example.com',
             ),
           ).workaroundFreezeLinuxMint(),
@@ -204,7 +206,7 @@ void showPrivateDeviceBindingDialog() {
           TextField(
             controller: codeController,
             decoration: const InputDecoration(
-              labelText: '绑定码',
+              labelText: '缁戝畾鐮?,
               hintText: 'ABCD-2345',
             ),
           ).workaroundFreezeLinuxMint(),
@@ -278,17 +280,16 @@ String bindingErrorMessage(String body) {
   } catch (_) {
     // Keep the client-side message stable when the endpoint returns plain text.
   }
-  return '绑定失败';
+  return '缁戝畾澶辫触';
 }
 
 Future<String> applyPrivateDeviceConfig(
   String apiBase,
   PrivateDeviceConfig config,
 ) async {
-  if (config.remoteId.isEmpty ||
-      config.unattendedPassword.isEmpty ||
+  if (config.unattendedPassword.isEmpty ||
       config.hbbsAddress.isEmpty) {
-    throw Exception('绑定配置不完整');
+    throw Exception('Binding config is incomplete');
   }
 
   await bind.mainSetOption(key: 'private-management-api', value: apiBase);
@@ -309,7 +310,7 @@ Future<String> applyPrivateDeviceConfig(
     password: config.unattendedPassword,
   );
   if (!passwordOk) {
-    throw Exception('无人值守密码设置失败');
+    throw Exception('Failed to set unattended password');
   }
 
   if (config.settingsPassword.isNotEmpty) {
@@ -319,46 +320,9 @@ Future<String> applyPrivateDeviceConfig(
     );
   }
 
-  final currentId = await bind.mainGetMyId();
-  if (currentId == config.remoteId) {
-    return '';
-  }
-
-  bind.mainChangeId(newId: config.remoteId);
-  var status = await bind.mainGetAsyncStatus();
-  var retries = 0;
-  while (status == ' ' && retries < 300) {
-    await Future.delayed(const Duration(milliseconds: 100));
-    status = await bind.mainGetAsyncStatus();
-    retries++;
-  }
-  if (status == ' ') {
-    return 'Timed out';
-  }
-
-  if (status.isEmpty) {
-    await Future.delayed(const Duration(milliseconds: 500));
-    final changedId = await bind.mainGetMyId();
-    if (changedId == config.remoteId) {
-      await restartPrivateRustDeskService();
-      await Future.delayed(const Duration(seconds: 1));
-      await gFFI.serverModel.fetchID();
-      return '';
-    }
-  }
-
-  if (status.isEmpty ||
-      status == 'server_not_support' ||
-      status == 'Unknown Error') {
-    final persisted = await persistPrivateRemoteIdFallback(config.remoteId);
-    if (!persisted) {
-      return 'Failed to persist remote ID';
-    }
-    await Future.delayed(const Duration(seconds: 1));
-    await gFFI.serverModel.fetchID();
-    return '';
-  }
-  return status;
+  await Future.delayed(const Duration(milliseconds: 300));
+  await gFFI.serverModel.fetchID();
+  return '';
 }
 
 Future<void> restartPrivateRustDeskService() async {
@@ -465,7 +429,7 @@ void verifyPrivateSettingsPassword({
         return;
       }
       setState(() {
-        message = '二级密码不正确';
+        message = '浜岀骇瀵嗙爜涓嶆纭?;
       });
     }
 
@@ -478,7 +442,7 @@ void verifyPrivateSettingsPassword({
           TextField(
             controller: controller,
             obscureText: true,
-            decoration: const InputDecoration(labelText: '二级密码'),
+            decoration: const InputDecoration(labelText: '浜岀骇瀵嗙爜'),
           ).workaroundFreezeLinuxMint(),
           if (message.isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -495,3 +459,4 @@ void verifyPrivateSettingsPassword({
     );
   });
 }
+
