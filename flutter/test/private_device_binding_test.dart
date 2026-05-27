@@ -31,4 +31,13 @@ void main() {
     expect(successBody, contains('restartPrivateRustDeskService()'));
     expect(successBody, contains('gFFI.serverModel.fetchID()'));
   });
+
+  test('private provision is loaded from the application working directory', () {
+    final source = File('lib/private_device_binding.dart').readAsStringSync();
+
+    expect(source, contains('rustdesk-private-provision.json'));
+    expect(source, contains('Directory.current.path'));
+    expect(source, contains('applyPrivateProvisionIfPresent'));
+    expect(source, contains('private-client-mode'));
+  });
 }

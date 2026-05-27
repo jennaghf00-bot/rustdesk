@@ -51,6 +51,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   var watchIsCanRecordAudio = false;
   Timer? _updateTimer;
   bool isCardClosed = false;
+  bool _isPrivateControlledClient = isPrivateControlledClient();
 
   final RxBool _editHover = false.obs;
   final RxBool _block = false.obs;
@@ -60,6 +61,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    if (_isPrivateControlledClient) {
+      return _buildBlock(child: buildPrivateControlledPane(context));
+    }
     final isIncomingOnly = bind.isIncomingOnly();
     return _buildBlock(
         child: Row(
@@ -70,6 +74,71 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         if (!isIncomingOnly) Expanded(child: buildRightPane(context)),
       ],
     ));
+  }
+
+  Widget buildPrivateControlledPane(BuildContext context) {
+    final model = gFFI.serverModel;
+    return ChangeNotifierProvider.value(
+      value: model,
+      child: Container(
+        width: 360,
+        height: 220,
+        color: Theme.of(context).colorScheme.surface,
+        padding: const EdgeInsets.all(22),
+        child: Consumer<ServerModel>(
+          builder: (_, serverModel, __) {
+            final remoteId = serverModel.serverId.text.isEmpty
+                ? '正在获取'
+                : serverModel.serverId.text;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '众博信AOI远程连接',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: Theme.of(context).textTheme.titleLarge?.color,
+                  ),
+                ),
+                const SizedBox(height: 22),
+                Text(
+                  '被控端 ID',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.color
+                        ?.withOpacity(0.55),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                GestureDetector(
+                  onDoubleTap: () {
+                    Clipboard.setData(ClipboardData(text: remoteId));
+                    showToast(translate("Copied"));
+                  },
+                  child: SelectableText(
+                    remoteId,
+                    style: const TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                const Text(
+                  '请将此 ID 提供给控制端发起远程连接',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
   }
 
   Widget _buildBlock({required Widget child}) {
@@ -134,7 +203,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       value: gFFI.serverModel,
       child: Container(
         width: isIncomingOnly ? 280.0 : 200.0,
-        color: Theme.of(context).colorScheme.background,
+        color: Theme.of(context).colorScheme.surface,
         child: Stack(
           children: [
             Column(
@@ -284,7 +353,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
             radius: 15,
             backgroundColor: hover.value
                 ? Theme.of(context).scaffoldBackgroundColor
-                : Theme.of(context).colorScheme.background,
+                : Theme.of(context).colorScheme.surface,
             child: Icon(
               Icons.more_vert_outlined,
               size: 20,
@@ -714,6 +783,18 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   @override
   void initState() {
     super.initState();
+    applyPrivateProvisionIfPresent().then((enabled) async {
+      if (!mounted) return;
+      if (enabled != _isPrivateControlledClient) {
+        setState(() {
+          _isPrivateControlledClient = enabled;
+        });
+      }
+      if (enabled) {
+        await gFFI.serverModel.fetchID();
+        await windowManager.setSize(const Size(360, 220));
+      }
+    });
     _updateTimer = periodic_immediate(const Duration(seconds: 1), () async {
       await gFFI.serverModel.fetchID();
       final error = await bind.mainGetError();
@@ -1122,7 +1203,7 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
             close();
           },
           buttonStyle: ButtonStyle(
-              backgroundColor: MaterialStatePropertyAll(Colors.red)),
+              backgroundColor: WidgetStatePropertyAll(Colors.red)),
         );
         final okButton = dialogButton(
           "OK",

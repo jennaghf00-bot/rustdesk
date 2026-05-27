@@ -40,6 +40,84 @@ class PrivateDeviceConfig {
   }
 }
 
+class PrivateProvisionConfig {
+  final String apiBase;
+  final PrivateDeviceConfig deviceConfig;
+
+  PrivateProvisionConfig({
+    required this.apiBase,
+    required this.deviceConfig,
+  });
+
+  factory PrivateProvisionConfig.fromJson(Map<String, dynamic> json) {
+    return PrivateProvisionConfig(
+      apiBase: json['apiBase'] as String? ?? '',
+      deviceConfig: PrivateDeviceConfig.fromJson(json),
+    );
+  }
+}
+
+const String kPrivateProvisionFileName = 'rustdesk-private-provision.json';
+const String kPrivateClientModeOption = 'private-client-mode';
+const String kPrivateClientModeControlled = 'controlled';
+
+bool isPrivateControlledClient() {
+  return bind.mainGetLocalOption(key: kPrivateClientModeOption) ==
+      kPrivateClientModeControlled;
+}
+
+Future<bool> applyPrivateProvisionIfPresent() async {
+  final provision = await loadPrivateProvisionConfig();
+  if (provision == null) return isPrivateControlledClient();
+
+  final status = await applyPrivateDeviceConfig(
+    normalizePrivateApiBase(provision.apiBase),
+    provision.deviceConfig,
+  );
+  if (status.isNotEmpty) {
+    debugPrint('failed to apply private provision: $status');
+    return false;
+  }
+  await bind.mainSetLocalOption(
+    key: kPrivateClientModeOption,
+    value: kPrivateClientModeControlled,
+  );
+  return true;
+}
+
+Future<PrivateProvisionConfig?> loadPrivateProvisionConfig() async {
+  for (final file in privateProvisionCandidateFiles()) {
+    try {
+      if (!await file.exists()) continue;
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is Map<String, dynamic>) {
+        return PrivateProvisionConfig.fromJson(decoded);
+      }
+    } catch (error) {
+      debugPrint('failed to read private provision ${file.path}: $error');
+    }
+  }
+  return null;
+}
+
+List<File> privateProvisionCandidateFiles() {
+  final candidates = <String>[
+    '${Directory.current.path}${Platform.pathSeparator}$kPrivateProvisionFileName',
+  ];
+  final executableDir = parentPath(Platform.resolvedExecutable);
+  if (executableDir.isNotEmpty) {
+    candidates.add('$executableDir${Platform.pathSeparator}$kPrivateProvisionFileName');
+  }
+  return candidates.toSet().map(File.new).toList();
+}
+
+String parentPath(String path) {
+  final normalized = path.replaceAll('\\', Platform.pathSeparator);
+  final index = normalized.lastIndexOf(Platform.pathSeparator);
+  if (index <= 0) return '';
+  return normalized.substring(0, index);
+}
+
 void showPrivateDeviceBindingDialog() {
   final apiController = TextEditingController();
   final codeController = TextEditingController();
