@@ -108,6 +108,24 @@ List<File> privateProvisionCandidateFiles() {
   if (executableDir.isNotEmpty) {
     candidates.add('$executableDir${Platform.pathSeparator}$kPrivateProvisionFileName');
   }
+  final environment = Platform.environment;
+  for (final key in [
+    'APPDATA',
+    'LOCALAPPDATA',
+    'ProgramFiles',
+    'ProgramFiles(x86)',
+  ]) {
+    final root = environment[key];
+    if (root == null || root.isEmpty) continue;
+    candidates.add(
+      '$root${Platform.pathSeparator}RustDesk${Platform.pathSeparator}$kPrivateProvisionFileName',
+    );
+    if (key == 'LOCALAPPDATA') {
+      candidates.add(
+        '$root${Platform.pathSeparator}Programs${Platform.pathSeparator}RustDesk${Platform.pathSeparator}$kPrivateProvisionFileName',
+      );
+    }
+  }
   return candidates.toSet().map(File.new).toList();
 }
 

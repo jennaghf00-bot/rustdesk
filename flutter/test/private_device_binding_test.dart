@@ -40,4 +40,14 @@ void main() {
     expect(source, contains('applyPrivateProvisionIfPresent'));
     expect(source, contains('private-client-mode'));
   });
+
+  test('private provision is also loaded from windows profile directories', () {
+    final source = File('lib/private_device_binding.dart').readAsStringSync();
+
+    expect(source, contains('Platform.environment'));
+    expect(source, contains('APPDATA'));
+    expect(source, contains('LOCALAPPDATA'));
+    expect(source, contains('Programs'));
+    expect(source, contains('ProgramFiles'));
+  });
 }
