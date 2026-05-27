@@ -239,6 +239,9 @@ Future<String> applyPrivateDeviceConfig(
     await Future.delayed(const Duration(milliseconds: 500));
     final changedId = await bind.mainGetMyId();
     if (changedId == config.remoteId) {
+      await restartPrivateRustDeskService();
+      await Future.delayed(const Duration(seconds: 1));
+      await gFFI.serverModel.fetchID();
       return '';
     }
   }
@@ -255,6 +258,16 @@ Future<String> applyPrivateDeviceConfig(
     return '';
   }
   return status;
+}
+
+Future<void> restartPrivateRustDeskService() async {
+  try {
+    await bind.mainStopService();
+    await Future.delayed(const Duration(milliseconds: 500));
+    await bind.mainStartService();
+  } catch (error) {
+    debugPrint('failed to restart RustDesk service after private binding: $error');
+  }
 }
 
 Future<bool> persistPrivateRemoteIdFallback(String remoteId) async {
@@ -282,14 +295,7 @@ Future<bool> persistPrivateRemoteIdFallback(String remoteId) async {
 
   if (!wroteConfig) return false;
 
-  try {
-    await bind.mainStopService();
-    await Future.delayed(const Duration(milliseconds: 500));
-    await bind.mainStartService();
-  } catch (error) {
-    debugPrint(
-        'failed to restart RustDesk service after private id fallback: $error');
-  }
+  await restartPrivateRustDeskService();
   return true;
 }
 

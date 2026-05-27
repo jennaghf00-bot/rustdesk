@@ -18,4 +18,17 @@ void main() {
     expect(functionBody, isNot(contains('hasPrivateSettingsPassword()')));
     expect(functionBody, isNot(contains('verifyPrivateSettingsPassword(')));
   });
+
+  test('private binding restarts service after successful id change', () {
+    final source = File('lib/private_device_binding.dart').readAsStringSync();
+    final successCheck = source.indexOf('if (changedId == config.remoteId)');
+    expect(successCheck, isNot(-1));
+
+    final successReturn = source.indexOf("return '';", successCheck);
+    expect(successReturn, isNot(-1));
+
+    final successBody = source.substring(successCheck, successReturn);
+    expect(successBody, contains('restartPrivateRustDeskService()'));
+    expect(successBody, contains('gFFI.serverModel.fetchID()'));
+  });
 }
