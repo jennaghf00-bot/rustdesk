@@ -278,7 +278,7 @@ void showPrivateDeviceBindingDialog() {
           TextField(
             controller: codeController,
             decoration: const InputDecoration(
-              labelText: '缁戝畾鐮?,
+              labelText: 'Binding code',
               hintText: 'ABCD-2345',
             ),
           ).workaroundFreezeLinuxMint(),
@@ -553,7 +553,7 @@ void verifyPrivateSettingsPassword({
         return;
       }
       setState(() {
-        message = '浜岀骇瀵嗙爜涓嶆纭?;
+        message = 'Invalid secondary password';
       });
     }
 

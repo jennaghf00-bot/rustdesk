@@ -150,6 +150,7 @@ fn generate_bindings(
         .allowlist_var(regex)
         .allowlist_function(regex)
         .rustified_enum(regex)
+        .rust_target(bindgen::RustTarget::Stable_1_68)
         .trust_clang_mangling(false)
         .layout_tests(false) // breaks 32/64-bit compat
         .generate_comments(false); // comments have prefix /*!\
@@ -159,8 +160,258 @@ fn generate_bindings(
     }
 
     b.generate().unwrap().write_to_file(ffi_rs).unwrap();
+    patch_codec_bindings(ffi_rs);
     fs::copy(ffi_rs, exact_file).ok(); // ignore failure
 }
+
+fn replace_opaque_struct(source: &mut String, name: &str, alias: &str, replacement: &str) {
+    let start_marker = format!("pub struct {name} {{");
+    let alias_marker = format!("pub type {alias} = {name};");
+    let Some(struct_pos) = source.find(&start_marker) else {
+        return;
+    };
+    let start = source[..struct_pos].rfind("#[repr(C)]").unwrap_or(struct_pos);
+    let Some(alias_pos) = source[struct_pos..].find(&alias_marker).map(|pos| struct_pos + pos) else {
+        return;
+    };
+    let end = alias_pos + alias_marker.len();
+    let section = &source[start..end];
+    if section.contains("pub _address: u8") {
+        source.replace_range(start..end, replacement);
+    }
+}
+
+fn patch_codec_bindings(ffi_rs: &Path) {
+    let Some(file_name) = ffi_rs.file_name().and_then(|name| name.to_str()) else {
+        return;
+    };
+    let Ok(mut source) = fs::read_to_string(ffi_rs) else {
+        return;
+    };
+
+    if file_name == "vpx_ffi.rs" {
+        replace_opaque_struct(
+            &mut source,
+            "vpx_codec_dec_cfg",
+            "vpx_codec_dec_cfg_t",
+            VPX_DEC_CFG,
+        );
+        replace_opaque_struct(
+            &mut source,
+            "vpx_codec_enc_cfg",
+            "vpx_codec_enc_cfg_t",
+            VPX_ENC_CFG,
+        );
+    } else if file_name == "aom_ffi.rs" {
+        if !source.contains("pub struct cfg_options") {
+            source = source.replace(
+                "pub type aom_codec_er_flags_t = u32;",
+                &format!("{AOM_CFG_OPTIONS}\npub type aom_codec_er_flags_t = u32;"),
+            );
+        }
+        replace_opaque_struct(
+            &mut source,
+            "aom_codec_dec_cfg",
+            "aom_codec_dec_cfg_t",
+            AOM_DEC_CFG,
+        );
+        replace_opaque_struct(
+            &mut source,
+            "aom_codec_enc_cfg",
+            "aom_codec_enc_cfg_t",
+            AOM_ENC_CFG,
+        );
+    }
+
+    fs::write(ffi_rs, source).unwrap();
+}
+
+const VPX_DEC_CFG: &str = r#"#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct vpx_codec_dec_cfg {
+    pub threads: ::std::os::raw::c_uint,
+    pub w: ::std::os::raw::c_uint,
+    pub h: ::std::os::raw::c_uint,
+}
+pub type vpx_codec_dec_cfg_t = vpx_codec_dec_cfg;"#;
+
+const VPX_ENC_CFG: &str = r#"#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct vpx_codec_enc_cfg {
+    pub g_usage: ::std::os::raw::c_uint,
+    pub g_threads: ::std::os::raw::c_uint,
+    pub g_profile: ::std::os::raw::c_uint,
+    pub g_w: ::std::os::raw::c_uint,
+    pub g_h: ::std::os::raw::c_uint,
+    pub g_bit_depth: vpx_bit_depth_t,
+    pub g_input_bit_depth: ::std::os::raw::c_uint,
+    pub g_timebase: vpx_rational,
+    pub g_error_resilient: vpx_codec_er_flags_t,
+    pub g_pass: vpx_enc_pass,
+    pub g_lag_in_frames: ::std::os::raw::c_uint,
+    pub rc_dropframe_thresh: ::std::os::raw::c_uint,
+    pub rc_resize_allowed: ::std::os::raw::c_uint,
+    pub rc_scaled_width: ::std::os::raw::c_uint,
+    pub rc_scaled_height: ::std::os::raw::c_uint,
+    pub rc_resize_up_thresh: ::std::os::raw::c_uint,
+    pub rc_resize_down_thresh: ::std::os::raw::c_uint,
+    pub rc_end_usage: vpx_rc_mode,
+    pub rc_twopass_stats_in: vpx_fixed_buf_t,
+    pub rc_firstpass_mb_stats_in: vpx_fixed_buf_t,
+    pub rc_target_bitrate: ::std::os::raw::c_uint,
+    pub rc_min_quantizer: ::std::os::raw::c_uint,
+    pub rc_max_quantizer: ::std::os::raw::c_uint,
+    pub rc_undershoot_pct: ::std::os::raw::c_uint,
+    pub rc_overshoot_pct: ::std::os::raw::c_uint,
+    pub rc_buf_sz: ::std::os::raw::c_uint,
+    pub rc_buf_initial_sz: ::std::os::raw::c_uint,
+    pub rc_buf_optimal_sz: ::std::os::raw::c_uint,
+    pub rc_2pass_vbr_bias_pct: ::std::os::raw::c_uint,
+    pub rc_2pass_vbr_minsection_pct: ::std::os::raw::c_uint,
+    pub rc_2pass_vbr_maxsection_pct: ::std::os::raw::c_uint,
+    pub rc_2pass_vbr_corpus_complexity: ::std::os::raw::c_uint,
+    pub kf_mode: vpx_kf_mode,
+    pub kf_min_dist: ::std::os::raw::c_uint,
+    pub kf_max_dist: ::std::os::raw::c_uint,
+    pub ss_number_layers: ::std::os::raw::c_uint,
+    pub ss_enable_auto_alt_ref: [::std::os::raw::c_int; VPX_SS_MAX_LAYERS as usize],
+    pub ss_target_bitrate: [::std::os::raw::c_uint; VPX_SS_MAX_LAYERS as usize],
+    pub ts_number_layers: ::std::os::raw::c_uint,
+    pub ts_target_bitrate: [::std::os::raw::c_uint; VPX_TS_MAX_LAYERS as usize],
+    pub ts_rate_decimator: [::std::os::raw::c_uint; VPX_TS_MAX_LAYERS as usize],
+    pub ts_periodicity: ::std::os::raw::c_uint,
+    pub ts_layer_id: [::std::os::raw::c_uint; VPX_TS_MAX_PERIODICITY as usize],
+    pub layer_target_bitrate: [::std::os::raw::c_uint; VPX_MAX_LAYERS as usize],
+    pub temporal_layering_mode: ::std::os::raw::c_int,
+    pub use_vizier_rc_params: ::std::os::raw::c_int,
+    pub active_wq_factor: vpx_rational_t,
+    pub err_per_mb_factor: vpx_rational_t,
+    pub sr_default_decay_limit: vpx_rational_t,
+    pub sr_diff_factor: vpx_rational_t,
+    pub kf_err_per_mb_factor: vpx_rational_t,
+    pub kf_frame_min_boost_factor: vpx_rational_t,
+    pub kf_frame_max_boost_first_factor: vpx_rational_t,
+    pub kf_frame_max_boost_subs_factor: vpx_rational_t,
+    pub kf_max_total_boost_factor: vpx_rational_t,
+    pub gf_max_total_boost_factor: vpx_rational_t,
+    pub gf_frame_max_boost_factor: vpx_rational_t,
+    pub zm_factor: vpx_rational_t,
+    pub rd_mult_inter_qp_fac: vpx_rational_t,
+    pub rd_mult_arf_qp_fac: vpx_rational_t,
+    pub rd_mult_key_qp_fac: vpx_rational_t,
+}
+pub type vpx_codec_enc_cfg_t = vpx_codec_enc_cfg;"#;
+
+const AOM_DEC_CFG: &str = r#"#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct aom_codec_dec_cfg {
+    pub threads: ::std::os::raw::c_uint,
+    pub w: ::std::os::raw::c_uint,
+    pub h: ::std::os::raw::c_uint,
+    pub allow_lowbitdepth: ::std::os::raw::c_uint,
+}
+pub type aom_codec_dec_cfg_t = aom_codec_dec_cfg;"#;
+
+const AOM_CFG_OPTIONS: &str = r#"#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct cfg_options {
+    pub init_by_cfg_file: ::std::os::raw::c_uint,
+    pub super_block_size: ::std::os::raw::c_uint,
+    pub max_partition_size: ::std::os::raw::c_uint,
+    pub min_partition_size: ::std::os::raw::c_uint,
+    pub disable_ab_partition_type: ::std::os::raw::c_uint,
+    pub disable_rect_partition_type: ::std::os::raw::c_uint,
+    pub disable_1to4_partition_type: ::std::os::raw::c_uint,
+    pub disable_flip_idtx: ::std::os::raw::c_uint,
+    pub disable_cdef: ::std::os::raw::c_uint,
+    pub disable_lr: ::std::os::raw::c_uint,
+    pub disable_obmc: ::std::os::raw::c_uint,
+    pub disable_warp_motion: ::std::os::raw::c_uint,
+    pub disable_global_motion: ::std::os::raw::c_uint,
+    pub disable_dist_wtd_comp: ::std::os::raw::c_uint,
+    pub disable_diff_wtd_comp: ::std::os::raw::c_uint,
+    pub disable_inter_intra_comp: ::std::os::raw::c_uint,
+    pub disable_masked_comp: ::std::os::raw::c_uint,
+    pub disable_one_sided_comp: ::std::os::raw::c_uint,
+    pub disable_palette: ::std::os::raw::c_uint,
+    pub disable_intrabc: ::std::os::raw::c_uint,
+    pub disable_cfl: ::std::os::raw::c_uint,
+    pub disable_smooth_intra: ::std::os::raw::c_uint,
+    pub disable_filter_intra: ::std::os::raw::c_uint,
+    pub disable_dual_filter: ::std::os::raw::c_uint,
+    pub disable_intra_angle_delta: ::std::os::raw::c_uint,
+    pub disable_intra_edge_filter: ::std::os::raw::c_uint,
+    pub disable_tx_64x64: ::std::os::raw::c_uint,
+    pub disable_smooth_inter_intra: ::std::os::raw::c_uint,
+    pub disable_inter_inter_wedge: ::std::os::raw::c_uint,
+    pub disable_inter_intra_wedge: ::std::os::raw::c_uint,
+    pub disable_paeth_intra: ::std::os::raw::c_uint,
+    pub disable_trellis_quant: ::std::os::raw::c_uint,
+    pub disable_ref_frame_mv: ::std::os::raw::c_uint,
+    pub reduced_reference_set: ::std::os::raw::c_uint,
+    pub reduced_tx_type_set: ::std::os::raw::c_uint,
+}
+pub type cfg_options_t = cfg_options;"#;
+
+const AOM_ENC_CFG: &str = r#"#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct aom_codec_enc_cfg {
+    pub g_usage: ::std::os::raw::c_uint,
+    pub g_threads: ::std::os::raw::c_uint,
+    pub g_profile: ::std::os::raw::c_uint,
+    pub g_w: ::std::os::raw::c_uint,
+    pub g_h: ::std::os::raw::c_uint,
+    pub g_limit: ::std::os::raw::c_uint,
+    pub g_forced_max_frame_width: ::std::os::raw::c_uint,
+    pub g_forced_max_frame_height: ::std::os::raw::c_uint,
+    pub g_bit_depth: aom_bit_depth_t,
+    pub g_input_bit_depth: ::std::os::raw::c_uint,
+    pub g_timebase: aom_rational,
+    pub g_error_resilient: aom_codec_er_flags_t,
+    pub g_pass: aom_enc_pass,
+    pub g_lag_in_frames: ::std::os::raw::c_uint,
+    pub rc_dropframe_thresh: ::std::os::raw::c_uint,
+    pub rc_resize_mode: ::std::os::raw::c_uint,
+    pub rc_resize_denominator: ::std::os::raw::c_uint,
+    pub rc_resize_kf_denominator: ::std::os::raw::c_uint,
+    pub rc_superres_mode: aom_superres_mode,
+    pub rc_superres_denominator: ::std::os::raw::c_uint,
+    pub rc_superres_kf_denominator: ::std::os::raw::c_uint,
+    pub rc_superres_qthresh: ::std::os::raw::c_uint,
+    pub rc_superres_kf_qthresh: ::std::os::raw::c_uint,
+    pub rc_end_usage: aom_rc_mode,
+    pub rc_twopass_stats_in: aom_fixed_buf_t,
+    pub rc_firstpass_mb_stats_in: aom_fixed_buf_t,
+    pub rc_target_bitrate: ::std::os::raw::c_uint,
+    pub rc_min_quantizer: ::std::os::raw::c_uint,
+    pub rc_max_quantizer: ::std::os::raw::c_uint,
+    pub rc_undershoot_pct: ::std::os::raw::c_uint,
+    pub rc_overshoot_pct: ::std::os::raw::c_uint,
+    pub rc_buf_sz: ::std::os::raw::c_uint,
+    pub rc_buf_initial_sz: ::std::os::raw::c_uint,
+    pub rc_buf_optimal_sz: ::std::os::raw::c_uint,
+    pub rc_2pass_vbr_bias_pct: ::std::os::raw::c_uint,
+    pub rc_2pass_vbr_minsection_pct: ::std::os::raw::c_uint,
+    pub rc_2pass_vbr_maxsection_pct: ::std::os::raw::c_uint,
+    pub fwd_kf_enabled: ::std::os::raw::c_int,
+    pub kf_mode: aom_kf_mode,
+    pub kf_min_dist: ::std::os::raw::c_uint,
+    pub kf_max_dist: ::std::os::raw::c_uint,
+    pub sframe_dist: ::std::os::raw::c_uint,
+    pub sframe_mode: ::std::os::raw::c_uint,
+    pub large_scale_tile: ::std::os::raw::c_uint,
+    pub monochrome: ::std::os::raw::c_uint,
+    pub full_still_picture_hdr: ::std::os::raw::c_uint,
+    pub save_as_annexb: ::std::os::raw::c_uint,
+    pub tile_width_count: ::std::os::raw::c_int,
+    pub tile_height_count: ::std::os::raw::c_int,
+    pub tile_widths: [::std::os::raw::c_int; 64usize],
+    pub tile_heights: [::std::os::raw::c_int; 64usize],
+    pub use_fixed_qp_offsets: ::std::os::raw::c_uint,
+    pub fixed_qp_offsets: [::std::os::raw::c_int; 5usize],
+    pub encoder_cfg: cfg_options_t,
+}
+pub type aom_codec_enc_cfg_t = aom_codec_enc_cfg;"#;
 
 fn gen_vcpkg_package(package: &str, ffi_header: &str, generated: &str, regex: &str) {
     let includes = find_package(package);
