@@ -62,6 +62,19 @@ const String kPrivateClientModeOption = 'private-client-mode';
 const String kPrivateClientModeControlled = 'controlled';
 const bool kPrivateControlledClientByDefault = true;
 const String kPrivateAppName = '\u4f17\u535a\u4fe1AOI\u8fdc\u7a0b\u8fde\u63a5';
+const String kPrivateInlineActivationPrefix = '--zbxcfg-';
+const String kPrivateInlineActivationAppliedCodeOption =
+    'private-inline-activation-applied-code';
+
+class PrivateInlineActivation {
+  final String apiBase;
+  final String code;
+
+  PrivateInlineActivation({
+    required this.apiBase,
+    required this.code,
+  });
+}
 
 bool isPrivateControlledClient() {
   final mode = bind.mainGetLocalOption(key: kPrivateClientModeOption);
@@ -70,6 +83,40 @@ bool isPrivateControlledClient() {
 }
 
 Future<bool> applyPrivateProvisionIfPresent() async {
+  final inlineActivation = loadPrivateInlineActivationFromExecutable();
+  if (inlineActivation != null) {
+    final alreadyAppliedCode = bind.mainGetLocalOption(
+      key: kPrivateInlineActivationAppliedCodeOption,
+    );
+    if (alreadyAppliedCode != inlineActivation.code) {
+      try {
+        final config = await consumePrivateBindingCode(
+          normalizePrivateApiBase(inlineActivation.apiBase),
+          inlineActivation.code,
+        );
+        final status = await applyPrivateDeviceConfig(
+          normalizePrivateApiBase(inlineActivation.apiBase),
+          config,
+        );
+        if (status.isNotEmpty) {
+          debugPrint('failed to apply inline activation payload: $status');
+          return false;
+        }
+        await bind.mainSetLocalOption(
+          key: kPrivateInlineActivationAppliedCodeOption,
+          value: inlineActivation.code,
+        );
+        await bind.mainSetLocalOption(
+          key: kPrivateClientModeOption,
+          value: kPrivateClientModeControlled,
+        );
+        return true;
+      } catch (error) {
+        debugPrint('failed to consume inline activation payload: $error');
+      }
+    }
+  }
+
   final provision = await loadPrivateProvisionConfig();
   if (provision == null) return isPrivateControlledClient();
 
@@ -86,6 +133,31 @@ Future<bool> applyPrivateProvisionIfPresent() async {
     value: kPrivateClientModeControlled,
   );
   return true;
+}
+
+PrivateInlineActivation? loadPrivateInlineActivationFromExecutable() {
+  try {
+    final executable = Platform.resolvedExecutable;
+    final normalized = executable.replaceAll('\\', '/');
+    final fileName = normalized.substring(normalized.lastIndexOf('/') + 1);
+    final markerIndex = fileName.lastIndexOf(kPrivateInlineActivationPrefix);
+    if (markerIndex < 0 || !fileName.toLowerCase().endsWith('.exe')) {
+      return null;
+    }
+    final payloadWithExt = fileName.substring(
+      markerIndex + kPrivateInlineActivationPrefix.length,
+    );
+    final payload = payloadWithExt.substring(0, payloadWithExt.length - 4);
+    final decoded = utf8.decode(base64Url.decode(base64Url.normalize(payload)));
+    final json = jsonDecode(decoded);
+    if (json is! Map<String, dynamic>) return null;
+    final apiBase = (json['apiBase'] as String? ?? '').trim();
+    final code = (json['code'] as String? ?? '').trim();
+    if (apiBase.isEmpty || code.isEmpty) return null;
+    return PrivateInlineActivation(apiBase: apiBase, code: code);
+  } catch (_) {
+    return null;
+  }
 }
 
 Future<PrivateProvisionConfig?> loadPrivateProvisionConfig() async {
@@ -287,7 +359,8 @@ Future<String> applyPrivateDeviceConfig(
   String apiBase,
   PrivateDeviceConfig config,
 ) async {
-  if (config.unattendedPassword.isEmpty ||
+  if (config.remoteId.isEmpty ||
+      config.unattendedPassword.isEmpty ||
       config.hbbsAddress.isEmpty) {
     throw Exception('Binding config is incomplete');
   }
@@ -327,9 +400,53 @@ Future<String> applyPrivateDeviceConfig(
     // Keep binding flow resilient across platforms/build variants.
   }
 
-  await Future.delayed(const Duration(milliseconds: 300));
-  await gFFI.serverModel.fetchID();
-  return '';
+  final currentId = await bind.mainGetMyId();
+  if (currentId == config.remoteId) {
+    await Future.delayed(const Duration(milliseconds: 300));
+    await gFFI.serverModel.fetchID();
+    return '';
+  }
+
+  bind.mainChangeId(newId: config.remoteId);
+  var status = await bind.mainGetAsyncStatus();
+  var retries = 0;
+  while (status == ' ' && retries < 300) {
+    await Future.delayed(const Duration(milliseconds: 100));
+    status = await bind.mainGetAsyncStatus();
+    retries++;
+  }
+  if (status == ' ') {
+    return 'Timed out while changing controlled ID';
+  }
+
+  Future<bool> verifyRemoteId() async {
+    await Future.delayed(const Duration(milliseconds: 600));
+    final changedId = await bind.mainGetMyId();
+    if (changedId == config.remoteId) {
+      await gFFI.serverModel.fetchID();
+      return true;
+    }
+    return false;
+  }
+
+  if (status.isEmpty && await verifyRemoteId()) {
+    return '';
+  }
+
+  if (status.isEmpty ||
+      status == 'server_not_support' ||
+      status == 'Unknown Error') {
+    final persisted = await persistPrivateRemoteIdFallback(config.remoteId);
+    if (!persisted) {
+      return 'Failed to persist controlled ID';
+    }
+    if (await verifyRemoteId()) {
+      return '';
+    }
+    return 'Controlled ID mismatch after fallback';
+  }
+
+  return status;
 }
 
 Future<void> restartPrivateRustDeskService() async {

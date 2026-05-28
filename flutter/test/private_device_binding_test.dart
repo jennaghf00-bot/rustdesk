@@ -19,7 +19,7 @@ void main() {
     expect(functionBody, isNot(contains('verifyPrivateSettingsPassword(')));
   });
 
-  test('private binding restarts service after successful id change', () {
+  test('private binding enforces configured controlled id and retries fallback', () {
     final source = File('lib/private_device_binding.dart').readAsStringSync();
     final functionStart = source.indexOf('Future<String> applyPrivateDeviceConfig(');
     expect(functionStart, isNot(-1));
@@ -28,8 +28,9 @@ void main() {
     expect(nextFunction, isNot(-1));
 
     final functionBody = source.substring(functionStart, nextFunction);
-    expect(functionBody, isNot(contains('mainChangeId')));
-    expect(functionBody, isNot(contains('persistPrivateRemoteIdFallback')));
+    expect(functionBody, contains('mainChangeId'));
+    expect(functionBody, contains('persistPrivateRemoteIdFallback'));
+    expect(functionBody, contains('mainGetMyId'));
     expect(functionBody, contains('kOptionStopService'));
     expect(functionBody, contains('mainStartService'));
     expect(functionBody, contains('gFFI.serverModel.fetchID()'));
@@ -46,6 +47,7 @@ void main() {
     final source = File('lib/private_device_binding.dart').readAsStringSync();
 
     expect(source, contains('rustdesk-private-provision.json'));
+    expect(source, contains('--zbxcfg-'));
     expect(source, contains('Directory.current.path'));
     expect(source, contains('applyPrivateProvisionIfPresent'));
     expect(source, contains('private-client-mode'));
