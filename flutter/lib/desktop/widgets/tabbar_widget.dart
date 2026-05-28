@@ -13,6 +13,7 @@ import 'package:flutter_hbb/desktop/pages/view_camera_page.dart';
 import 'package:flutter_hbb/main.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
+import 'package:flutter_hbb/private_device_binding.dart';
 import 'package:get/get.dart';
 import 'package:get/get_rx/src/rx_workers/utils/debouncer.dart';
 import 'package:scroll_pos/scroll_pos.dart';
@@ -325,8 +326,20 @@ class _DesktopTabState extends State<DesktopTab>
       tabType == DesktopTabType.main ||
       tabType == DesktopTabType.cm ||
       tabType == DesktopTabType.install;
+  bool get isPrivateControlledMainWindow =>
+      tabType == DesktopTabType.main && isPrivateControlledClient();
 
   _DesktopTabState() : super();
+
+  Future<void> hidePrivateControlledMainWindow() async {
+    try {
+      await bind.mainSetOption(key: kOptionStopService, value: 'N');
+      await bind.mainStartService();
+    } catch (_) {
+      // The service may already be running or unavailable in this build.
+    }
+    await windowManager.hide();
+  }
 
   static RxString tablabelGetter(String peerId) {
     final alias = bind.mainGetPeerOptionSync(id: peerId, key: 'alias');
@@ -432,6 +445,12 @@ class _DesktopTabState extends State<DesktopTab>
 
   @override
   void onWindowClose() async {
+    if (isPrivateControlledMainWindow) {
+      await hidePrivateControlledMainWindow();
+      super.onWindowClose();
+      return;
+    }
+
     mainWindowClose() async => await windowManager.hide();
     notMainWindowClose(WindowController windowController) async {
       if (controller.length != 0) {
@@ -610,7 +629,9 @@ class _DesktopTabState extends State<DesktopTab>
                               .then((value) => stateGlobal.setMaximized(value));
                         }
                       }
-                    : (isIncomingHomePage ? () {} : null), // Keep tap recognizer for Windows touch.
+                    : (isIncomingHomePage
+                        ? () {}
+                        : null), // Keep tap recognizer for Windows touch.
                 onPanStart: (_) => startDragging(isMainWindow),
                 onPanCancel: () {
                   // We want to disable dragging of the tab area in the tab bar.
@@ -684,6 +705,7 @@ class _DesktopTabState extends State<DesktopTab>
         // hide simulated action buttons when we in compatible ui mode, because of reusing system title bar.
         WindowActionPanel(
           isMainWindow: isMainWindow,
+          isPrivateControlledMainWindow: isPrivateControlledMainWindow,
           state: state,
           tabController: controller,
           invisibleTabKeys: invisibleTabKeys,
@@ -692,6 +714,7 @@ class _DesktopTabState extends State<DesktopTab>
           showMaximize: showMaximize,
           showClose: showClose,
           onClose: onWindowCloseButton,
+          onPrivateControlledClose: hidePrivateControlledMainWindow,
           labelGetter: labelGetter,
         ).paddingOnly(left: 10)
       ],
@@ -701,6 +724,7 @@ class _DesktopTabState extends State<DesktopTab>
 
 class WindowActionPanel extends StatefulWidget {
   final bool isMainWindow;
+  final bool isPrivateControlledMainWindow;
   final Rx<DesktopTabState> state;
   final DesktopTabController tabController;
 
@@ -709,6 +733,7 @@ class WindowActionPanel extends StatefulWidget {
   final bool showClose;
   final Widget? tail;
   final Future<bool> Function()? onClose;
+  final Future<void> Function()? onPrivateControlledClose;
 
   final RxList<String> invisibleTabKeys;
   final LabelGetter? labelGetter;
@@ -716,6 +741,7 @@ class WindowActionPanel extends StatefulWidget {
   const WindowActionPanel(
       {Key? key,
       required this.isMainWindow,
+      required this.isPrivateControlledMainWindow,
       required this.state,
       required this.tabController,
       required this.invisibleTabKeys,
@@ -724,6 +750,7 @@ class WindowActionPanel extends StatefulWidget {
       this.showMaximize = true,
       this.showClose = true,
       this.onClose,
+      this.onPrivateControlledClose,
       this.labelGetter})
       : super(key: key);
 
@@ -800,6 +827,10 @@ class WindowActionPanelState extends State<WindowActionPanel> {
                   message: 'Close',
                   icon: IconFont.close,
                   onTap: () async {
+                    if (widget.isPrivateControlledMainWindow) {
+                      await widget.onPrivateControlledClose?.call();
+                      return;
+                    }
                     final res = await widget.onClose?.call() ?? true;
                     if (res) {
                       // hide for all window
