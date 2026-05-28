@@ -30,6 +30,8 @@ void main() {
     final functionBody = source.substring(functionStart, nextFunction);
     expect(functionBody, isNot(contains('mainChangeId')));
     expect(functionBody, isNot(contains('persistPrivateRemoteIdFallback')));
+    expect(functionBody, contains('kOptionStopService'));
+    expect(functionBody, contains('mainStartService'));
     expect(functionBody, contains('gFFI.serverModel.fetchID()'));
   });
 

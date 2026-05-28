@@ -301,6 +301,7 @@ Future<String> applyPrivateDeviceConfig(
   await bind.mainSetOption(key: 'key', value: config.serverKey);
   await bind.mainSetOption(key: kOptionEnablePrivacyMode, value: 'N');
   await bind.mainSetOption(key: kOptionApproveMode, value: 'password');
+  await bind.mainSetOption(key: kOptionStopService, value: 'N');
   await bind.mainSetOption(
     key: kOptionVerificationMethod,
     value: kUsePermanentPassword,
@@ -318,6 +319,12 @@ Future<String> applyPrivateDeviceConfig(
       key: kPrivateSettingsPasswordOption,
       value: config.settingsPassword,
     );
+  }
+
+  try {
+    await bind.mainStartService();
+  } catch (_) {
+    // Keep binding flow resilient across platforms/build variants.
   }
 
   await Future.delayed(const Duration(milliseconds: 300));

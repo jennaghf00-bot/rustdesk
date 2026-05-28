@@ -58,6 +58,16 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
   final GlobalKey _childKey = GlobalKey();
 
+  Future<void> _ensurePrivateControlledServiceRunning() async {
+    if (!_isPrivateControlledClient) return;
+    try {
+      await bind.mainSetOption(key: kOptionStopService, value: 'N');
+      await bind.mainStartService();
+    } catch (_) {
+      // Keep startup resilient even when service control is unavailable.
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -791,6 +801,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         });
       }
       if (enabled) {
+        await _ensurePrivateControlledServiceRunning();
         await gFFI.serverModel.fetchID();
         await windowManager.setSize(const Size(360, 220));
       }
@@ -803,6 +814,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         setState(() {});
       }
       final v = await mainGetBoolOption(kOptionStopService);
+      if (_isPrivateControlledClient && v) {
+        await _ensurePrivateControlledServiceRunning();
+      }
       if (v != svcStopped.value) {
         svcStopped.value = v;
         setState(() {});
