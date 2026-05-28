@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -63,6 +63,10 @@ const String kPrivateClientModeControlled = 'controlled';
 const bool kPrivateControlledClientByDefault = true;
 const String kPrivateAppName = '\u4f17\u535a\u4fe1AOI\u8fdc\u7a0b\u8fde\u63a5';
 const String kPrivateInlineActivationPrefix = '--zbxcfg-';
+const String kPrivateInlineActivationEnvKey =
+    'RUSTDESK_PRIVATE_INLINE_ACTIVATION';
+const String kPrivateInlineActivationFileMarker =
+    '\nRUSTDESK_PRIVATE_INLINE_ACTIVATION_V1:';
 const String kPrivateInlineActivationAppliedCodeOption =
     'private-inline-activation-applied-code';
 
@@ -136,6 +140,14 @@ Future<bool> applyPrivateProvisionIfPresent() async {
 }
 
 PrivateInlineActivation? loadPrivateInlineActivationFromExecutable() {
+  final envPayload = Platform.environment[kPrivateInlineActivationEnvKey];
+  final envActivation = decodePrivateInlineActivationPayload(envPayload);
+  if (envActivation != null) return envActivation;
+
+  final filePayload = loadPrivateInlineActivationPayloadFromExecutableBytes();
+  final fileActivation = decodePrivateInlineActivationPayload(filePayload);
+  if (fileActivation != null) return fileActivation;
+
   try {
     final executable = Platform.resolvedExecutable;
     final normalized = executable.replaceAll('\\', '/');
@@ -148,7 +160,18 @@ PrivateInlineActivation? loadPrivateInlineActivationFromExecutable() {
       markerIndex + kPrivateInlineActivationPrefix.length,
     );
     final payload = payloadWithExt.substring(0, payloadWithExt.length - 4);
-    final decoded = utf8.decode(base64Url.decode(base64Url.normalize(payload)));
+    return decodePrivateInlineActivationPayload(payload);
+  } catch (_) {
+    return null;
+  }
+}
+
+PrivateInlineActivation? decodePrivateInlineActivationPayload(String? payload) {
+  if (payload == null || payload.trim().isEmpty) return null;
+  try {
+    final decoded = utf8.decode(
+      base64Url.decode(base64Url.normalize(payload.trim())),
+    );
     final json = jsonDecode(decoded);
     if (json is! Map<String, dynamic>) return null;
     final apiBase = (json['apiBase'] as String? ?? '').trim();
@@ -158,6 +181,35 @@ PrivateInlineActivation? loadPrivateInlineActivationFromExecutable() {
   } catch (_) {
     return null;
   }
+}
+
+String? loadPrivateInlineActivationPayloadFromExecutableBytes() {
+  try {
+    final bytes = File(Platform.resolvedExecutable).readAsBytesSync();
+    final marker = utf8.encode(kPrivateInlineActivationFileMarker);
+    final index = lastIndexOfBytes(bytes, marker);
+    if (index < 0) return null;
+    final payloadBytes = bytes.sublist(index + marker.length);
+    final payload = utf8.decode(payloadBytes, allowMalformed: true).trim();
+    return payload.isEmpty ? null : payload;
+  } catch (_) {
+    return null;
+  }
+}
+
+int lastIndexOfBytes(List<int> haystack, List<int> needle) {
+  if (needle.isEmpty || haystack.length < needle.length) return -1;
+  for (var i = haystack.length - needle.length; i >= 0; i--) {
+    var matches = true;
+    for (var j = 0; j < needle.length; j++) {
+      if (haystack[i + j] != needle[j]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return i;
+  }
+  return -1;
 }
 
 Future<PrivateProvisionConfig?> loadPrivateProvisionConfig() async {
@@ -181,7 +233,8 @@ List<File> privateProvisionCandidateFiles() {
   ];
   final executableDir = parentPath(Platform.resolvedExecutable);
   if (executableDir.isNotEmpty) {
-    candidates.add('$executableDir${Platform.pathSeparator}$kPrivateProvisionFileName');
+    candidates.add(
+        '$executableDir${Platform.pathSeparator}$kPrivateProvisionFileName');
   }
   final environment = Platform.environment;
   for (final key in [
@@ -335,7 +388,8 @@ String normalizePrivateApiBase(String apiBase) {
   }
   const bindingPath = '/api/bindings/consume';
   if (normalized.endsWith(bindingPath)) {
-    normalized = normalized.substring(0, normalized.length - bindingPath.length);
+    normalized =
+        normalized.substring(0, normalized.length - bindingPath.length);
   }
   if (normalized.endsWith('/api')) {
     normalized = normalized.substring(0, normalized.length - 4);
@@ -455,7 +509,8 @@ Future<void> restartPrivateRustDeskService() async {
     await Future.delayed(const Duration(milliseconds: 500));
     await bind.mainStartService();
   } catch (error) {
-    debugPrint('failed to restart RustDesk service after private binding: $error');
+    debugPrint(
+        'failed to restart RustDesk service after private binding: $error');
   }
 }
 
@@ -498,7 +553,8 @@ List<String> privateConfigFileCandidates(String? appData, String? programData) {
   return paths.toSet().toList();
 }
 
-Future<void> writePrivateRemoteIdConfig(File configFile, String remoteId) async {
+Future<void> writePrivateRemoteIdConfig(
+    File configFile, String remoteId) async {
   await configFile.parent.create(recursive: true);
   var content = '';
   if (await configFile.exists()) {
@@ -583,4 +639,3 @@ void verifyPrivateSettingsPassword({
     );
   });
 }
-

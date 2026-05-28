@@ -19,6 +19,8 @@ const APP_METADATA_CONFIG: &str = "meta.toml";
 const META_LINE_PREFIX_TIMESTAMP: &str = "timestamp = ";
 const APP_PREFIX: &str = "rustdesk";
 const APPNAME_RUNTIME_ENV_KEY: &str = "RUSTDESK_APPNAME";
+const PRIVATE_INLINE_ACTIVATION_ENV_KEY: &str = "RUSTDESK_PRIVATE_INLINE_ACTIVATION";
+const PRIVATE_INLINE_ACTIVATION_MARKER: &[u8] = b"\nRUSTDESK_PRIVATE_INLINE_ACTIVATION_V1:";
 #[cfg(windows)]
 const SET_FOREGROUND_WINDOW_ENV_KEY: &str = "SET_FOREGROUND_WINDOW";
 
@@ -65,6 +67,7 @@ fn setup(
     clear: bool,
     _args: &Vec<String>,
     _ui: &mut bool,
+    private_inline_activation: Option<&str>,
 ) -> Option<PathBuf> {
     let dir = if let Some(dir) = dir {
         dir
@@ -95,7 +98,45 @@ fn setup(
     win::copy_runtime_broker(&dir);
     #[cfg(linux)]
     reader.configure_permission(&dir);
-    Some(dir.join(&reader.exe))
+    let executable = dir.join(&reader.exe);
+    if let Some(payload) = private_inline_activation {
+        persist_private_inline_activation(&executable, payload);
+    }
+    Some(executable)
+}
+
+fn private_inline_activation_from_current_exe() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let data = std::fs::read(exe).ok()?;
+    let marker = find_last_subslice(&data, PRIVATE_INLINE_ACTIVATION_MARKER)?;
+    let payload = &data[marker + PRIVATE_INLINE_ACTIVATION_MARKER.len()..];
+    let payload = std::str::from_utf8(payload).ok()?.trim();
+    if payload.is_empty() {
+        None
+    } else {
+        Some(payload.to_owned())
+    }
+}
+
+fn persist_private_inline_activation(executable: &Path, payload: &str) {
+    let Ok(mut data) = std::fs::read(executable) else {
+        return;
+    };
+    if let Some(marker) = find_last_subslice(&data, PRIVATE_INLINE_ACTIVATION_MARKER) {
+        data.truncate(marker);
+    }
+    data.extend_from_slice(PRIVATE_INLINE_ACTIVATION_MARKER);
+    data.extend_from_slice(payload.as_bytes());
+    let _ = std::fs::write(executable, data);
+}
+
+fn find_last_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .rposition(|window| window == needle)
 }
 
 fn use_null_stdio() -> bool {
@@ -132,7 +173,7 @@ fn is_windows_7() -> bool {
     false
 }
 
-fn execute(path: PathBuf, args: Vec<String>, _ui: bool) {
+fn execute(path: PathBuf, args: Vec<String>, _ui: bool, private_inline_activation: Option<&str>) {
     println!("executing {}", path.display());
     // setup env
     let exe = std::env::current_exe().unwrap_or_default();
@@ -150,6 +191,9 @@ fn execute(path: PathBuf, args: Vec<String>, _ui: bool) {
     }
 
     cmd.env(APPNAME_RUNTIME_ENV_KEY, exe_name);
+    if let Some(payload) = private_inline_activation {
+        cmd.env(PRIVATE_INLINE_ACTIVATION_ENV_KEY, payload);
+    }
     if use_null_stdio() {
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -194,19 +238,21 @@ fn main() {
 
     let mut ui = false;
     let reader = BinaryReader::default();
+    let private_inline_activation = private_inline_activation_from_current_exe();
     if let Some(exe) = setup(
         reader,
         None,
         click_setup || args.contains(&"--silent-install".to_owned()),
         &args,
         &mut ui,
+        private_inline_activation.as_deref(),
     ) {
         if click_setup {
             args = vec!["--install".to_owned()];
         } else if quick_support {
             args = vec!["--quick_support".to_owned()];
         }
-        execute(exe, args, ui);
+        execute(exe, args, ui, private_inline_activation.as_deref());
     }
 }
 
