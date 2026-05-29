@@ -230,12 +230,7 @@ fn main() {
         }
         i += 1;
     }
-    let exe_lower = arg_exe.to_lowercase();
-    // Browsers may rename downloads to "...-install (1).exe", which should still
-    // trigger installer mode instead of running as a plain portable binary.
-    let click_setup = args.is_empty()
-        && exe_lower.ends_with(".exe")
-        && (exe_lower.ends_with("install.exe") || exe_lower.contains("-install "));
+    let click_setup = args.is_empty() && arg_exe.to_lowercase().ends_with("install.exe");
     #[cfg(windows)]
     let quick_support = args.is_empty() && win::is_quick_support_exe(&arg_exe);
     #[cfg(not(windows))]
