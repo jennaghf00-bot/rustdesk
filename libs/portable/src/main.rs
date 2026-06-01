@@ -11,9 +11,9 @@ pub mod bin_reader;
 #[cfg(windows)]
 mod ui;
 
-#[cfg(windows)]
+#[cfg(all(windows, not(test)))]
 const APP_METADATA: &[u8] = include_bytes!("../app_metadata.toml");
-#[cfg(not(windows))]
+#[cfg(any(not(windows), test))]
 const APP_METADATA: &[u8] = &[];
 const APP_METADATA_CONFIG: &str = "meta.toml";
 const META_LINE_PREFIX_TIMESTAMP: &str = "timestamp = ";
@@ -139,6 +139,17 @@ fn find_last_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .rposition(|window| window == needle)
 }
 
+fn should_click_setup(arg_exe: &str, args: &[String], has_private_inline_activation: bool) -> bool {
+    if !args.is_empty() {
+        return false;
+    }
+    let exe_lower = arg_exe.to_lowercase();
+    exe_lower.ends_with(".exe")
+        && (has_private_inline_activation
+            || exe_lower.ends_with("install.exe")
+            || exe_lower.contains("-install "))
+}
+
 fn use_null_stdio() -> bool {
     #[cfg(windows)]
     {
@@ -230,12 +241,10 @@ fn main() {
         }
         i += 1;
     }
-    let exe_lower = arg_exe.to_lowercase();
+    let private_inline_activation = private_inline_activation_from_current_exe();
     // Browsers often save repeated downloads as "...-install (1).exe".
     // Treat those as installers too so users do not accidentally run portable mode.
-    let click_setup = args.is_empty()
-        && exe_lower.ends_with(".exe")
-        && (exe_lower.ends_with("install.exe") || exe_lower.contains("-install "));
+    let click_setup = should_click_setup(&arg_exe, &args, private_inline_activation.is_some());
     #[cfg(windows)]
     let quick_support = args.is_empty() && win::is_quick_support_exe(&arg_exe);
     #[cfg(not(windows))]
@@ -243,7 +252,6 @@ fn main() {
 
     let mut ui = false;
     let reader = BinaryReader::default();
-    let private_inline_activation = private_inline_activation_from_current_exe();
     if let Some(exe) = setup(
         reader,
         None,
@@ -258,6 +266,30 @@ fn main() {
             args = vec!["--quick_support".to_owned()];
         }
         execute(exe, args, ui, private_inline_activation.as_deref());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_click_setup;
+
+    #[test]
+    fn private_inline_activation_forces_install_mode_when_filename_is_truncated() {
+        assert!(should_click_setup(
+            "ZBX-0040--zbxcfg-truncated.exe",
+            &[],
+            true
+        ));
+    }
+
+    #[test]
+    fn repeated_download_install_name_still_installs() {
+        assert!(should_click_setup("ZBX-0040-install (1).exe", &[], false));
+    }
+
+    #[test]
+    fn non_private_plain_exe_without_install_name_stays_portable() {
+        assert!(!should_click_setup("rustdesk.exe", &[], false));
     }
 }
 
