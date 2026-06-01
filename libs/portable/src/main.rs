@@ -230,7 +230,12 @@ fn main() {
         }
         i += 1;
     }
-    let click_setup = args.is_empty() && arg_exe.to_lowercase().ends_with("install.exe");
+    let exe_lower = arg_exe.to_lowercase();
+    // Browsers often save repeated downloads as "...-install (1).exe".
+    // Treat those as installers too so users do not accidentally run portable mode.
+    let click_setup = args.is_empty()
+        && exe_lower.ends_with(".exe")
+        && (exe_lower.ends_with("install.exe") || exe_lower.contains("-install "));
     #[cfg(windows)]
     let quick_support = args.is_empty() && win::is_quick_support_exe(&arg_exe);
     #[cfg(not(windows))]
