@@ -500,12 +500,6 @@ Future<String> applyPrivateDeviceConfig(
     );
   }
 
-  try {
-    await bind.mainStartService();
-  } catch (_) {
-    // Keep binding flow resilient across platforms/build variants.
-  }
-
   final currentId = await bind.mainGetMyId();
   if (currentId == config.remoteId) {
     await Future.delayed(const Duration(milliseconds: 300));
@@ -584,8 +578,6 @@ Future<bool> persistPrivateRemoteIdFallback(String remoteId) async {
   }
 
   if (!wroteConfig) return false;
-
-  await restartPrivateRustDeskService();
   return true;
 }
 

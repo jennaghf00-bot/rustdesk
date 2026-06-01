@@ -287,7 +287,7 @@ class _ConnectionPageState extends State<ConnectionPage>
     super.onWindowClose();
     if (isPrivateControlledClient()) {
       try {
-        await bind.mainStartService();
+        await bind.mainSetOption(key: kOptionStopService, value: 'N');
       } catch (_) {
         // The service may already be running or unavailable in this build.
       }

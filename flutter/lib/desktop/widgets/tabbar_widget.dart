@@ -334,7 +334,6 @@ class _DesktopTabState extends State<DesktopTab>
   Future<void> hidePrivateControlledMainWindow() async {
     try {
       await bind.mainSetOption(key: kOptionStopService, value: 'N');
-      await bind.mainStartService();
     } catch (_) {
       // The service may already be running or unavailable in this build.
     }
