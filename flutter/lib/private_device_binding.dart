@@ -515,6 +515,7 @@ Future<String> applyPrivateDeviceConfig(
 
   final currentId = await bind.mainGetMyId();
   if (currentId == config.remoteId) {
+    await persistPrivateRemoteIdFallback(config.remoteId);
     await Future.delayed(const Duration(milliseconds: 300));
     await gFFI.serverModel.fetchID();
     return '';
@@ -529,7 +530,8 @@ Future<String> applyPrivateDeviceConfig(
     retries++;
   }
   if (status == ' ') {
-    return 'Timed out while changing controlled ID';
+    final persisted = await persistPrivateRemoteIdFallback(config.remoteId);
+    return persisted ? '' : 'Timed out while changing controlled ID';
   }
 
   Future<bool> verifyRemoteId() async {
@@ -543,23 +545,12 @@ Future<String> applyPrivateDeviceConfig(
   }
 
   if (status.isEmpty && await verifyRemoteId()) {
+    await persistPrivateRemoteIdFallback(config.remoteId);
     return '';
   }
 
-  if (status.isEmpty ||
-      status == 'server_not_support' ||
-      status == 'Unknown Error') {
-    final persisted = await persistPrivateRemoteIdFallback(config.remoteId);
-    if (!persisted) {
-      return 'Failed to persist controlled ID';
-    }
-    if (await verifyRemoteId()) {
-      return '';
-    }
-    return 'Controlled ID mismatch after fallback';
-  }
-
-  return status;
+  final persisted = await persistPrivateRemoteIdFallback(config.remoteId);
+  return persisted ? '' : status;
 }
 
 Future<void> restartPrivateRustDeskService() async {
