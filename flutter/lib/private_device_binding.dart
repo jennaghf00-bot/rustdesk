@@ -91,10 +91,12 @@ const String kPrivateForcedRemoteIdOption = 'private-forced-remote-id';
 class PrivateInlineActivation {
   final String apiBase;
   final String code;
+  final PrivateDeviceConfig? deviceConfig;
 
   PrivateInlineActivation({
     required this.apiBase,
     required this.code,
+    this.deviceConfig,
   });
 }
 
@@ -112,10 +114,11 @@ Future<bool> applyPrivateProvisionIfPresent() async {
     );
     if (alreadyAppliedCode != inlineActivation.code) {
       try {
-        final config = await consumePrivateBindingCode(
-          normalizePrivateApiBase(inlineActivation.apiBase),
-          inlineActivation.code,
-        );
+        final config = inlineActivation.deviceConfig ??
+            await consumePrivateBindingCode(
+              normalizePrivateApiBase(inlineActivation.apiBase),
+              inlineActivation.code,
+            );
         final status = await applyPrivateDeviceConfig(
           normalizePrivateApiBase(inlineActivation.apiBase),
           config,
@@ -162,7 +165,7 @@ Future<bool> stagePrivateProvisionForInstalledClient(String installPath) async {
   if (inlineActivation == null) return false;
 
   final apiBase = normalizePrivateApiBase(inlineActivation.apiBase);
-  final config =
+  final config = inlineActivation.deviceConfig ??
       await consumePrivateBindingCode(apiBase, inlineActivation.code);
   final status = await applyPrivateDeviceConfig(apiBase, config);
   if (status.isNotEmpty) {
@@ -243,7 +246,12 @@ PrivateInlineActivation? decodePrivateInlineActivationPayload(String? payload) {
     final apiBase = (json['apiBase'] as String? ?? '').trim();
     final code = (json['code'] as String? ?? '').trim();
     if (apiBase.isEmpty || code.isEmpty) return null;
-    return PrivateInlineActivation(apiBase: apiBase, code: code);
+    final deviceConfig = PrivateDeviceConfig.fromJson(json);
+    return PrivateInlineActivation(
+      apiBase: apiBase,
+      code: code,
+      deviceConfig: deviceConfig.remoteId.isEmpty ? null : deviceConfig,
+    );
   } catch (_) {
     return null;
   }
