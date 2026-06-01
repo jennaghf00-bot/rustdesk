@@ -3705,7 +3705,7 @@ sc start {app_name}
 
 fn run_after_run_cmds(silent: bool) {
     let (_, _, _, exe) = get_install_info();
-    if !silent {
+    if !silent && !has_private_inline_activation_payload() {
         log::debug!("Spawn new window");
         allow_err!(std::process::Command::new("cmd")
             .args(&["/c", "timeout", "/t", "2", "&", &format!("{exe}")])
@@ -3716,6 +3716,17 @@ fn run_after_run_cmds(silent: bool) {
         allow_err!(std::process::Command::new(&exe).arg("--tray").spawn());
     }
     std::thread::sleep(std::time::Duration::from_millis(300));
+}
+
+fn has_private_inline_activation_payload() -> bool {
+    const MARKER: &[u8] = b"\nRUSTDESK_PRIVATE_INLINE_ACTIVATION_V1:";
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    let Ok(data) = std::fs::read(exe) else {
+        return false;
+    };
+    data.windows(MARKER.len()).any(|window| window == MARKER)
 }
 
 #[inline]

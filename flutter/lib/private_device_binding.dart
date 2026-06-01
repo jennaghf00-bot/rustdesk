@@ -163,6 +163,19 @@ Future<bool> stagePrivateProvisionForInstalledClient(String installPath) async {
   final apiBase = normalizePrivateApiBase(inlineActivation.apiBase);
   final config =
       await consumePrivateBindingCode(apiBase, inlineActivation.code);
+  final status = await applyPrivateDeviceConfig(apiBase, config);
+  if (status.isNotEmpty) {
+    debugPrint('failed to apply private install provision: $status');
+  }
+  await bind.mainSetLocalOption(
+    key: kPrivateClientModeOption,
+    value: kPrivateClientModeControlled,
+  );
+  await bind.mainSetLocalOption(
+    key: kPrivateInlineActivationAppliedCodeOption,
+    value: inlineActivation.code,
+  );
+
   final provision = PrivateProvisionConfig(
     apiBase: apiBase,
     deviceConfig: config,
@@ -188,7 +201,7 @@ Future<bool> stagePrivateProvisionForInstalledClient(String installPath) async {
     }
   }
 
-  return wroteAny;
+  return wroteAny && status.isEmpty;
 }
 
 PrivateInlineActivation? loadPrivateInlineActivationFromExecutable() {
