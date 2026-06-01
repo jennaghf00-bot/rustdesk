@@ -38,6 +38,16 @@ class PrivateDeviceConfig {
       serverAddress: json['serverAddress'] as String? ?? '',
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'remoteId': remoteId,
+        'unattendedPassword': unattendedPassword,
+        'settingsPassword': settingsPassword,
+        'hbbsAddress': hbbsAddress,
+        'hbbrAddress': hbbrAddress,
+        'serverKey': serverKey,
+        'serverAddress': serverAddress,
+      };
 }
 
 class PrivateProvisionConfig {
@@ -55,6 +65,13 @@ class PrivateProvisionConfig {
       deviceConfig: PrivateDeviceConfig.fromJson(json),
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'mode': kPrivateClientModeControlled,
+        'appName': kPrivateAppName,
+        'apiBase': apiBase,
+        ...deviceConfig.toJson(),
+      };
 }
 
 const String kPrivateProvisionFileName = 'rustdesk-private-provision.json';
@@ -137,6 +154,41 @@ Future<bool> applyPrivateProvisionIfPresent() async {
     value: kPrivateClientModeControlled,
   );
   return true;
+}
+
+Future<bool> stagePrivateProvisionForInstalledClient(String installPath) async {
+  final inlineActivation = loadPrivateInlineActivationFromExecutable();
+  if (inlineActivation == null) return false;
+
+  final apiBase = normalizePrivateApiBase(inlineActivation.apiBase);
+  final config =
+      await consumePrivateBindingCode(apiBase, inlineActivation.code);
+  final provision = PrivateProvisionConfig(
+    apiBase: apiBase,
+    deviceConfig: config,
+  );
+  final encoded =
+      const JsonEncoder.withIndent('  ').convert(provision.toJson());
+
+  final targets = {
+    if (installPath.trim().isNotEmpty)
+      '${installPath.trim().replaceAll('/', Platform.pathSeparator)}${Platform.pathSeparator}$kPrivateProvisionFileName',
+    ...privateProvisionCandidateFiles().map((file) => file.path),
+  };
+
+  var wroteAny = false;
+  for (final target in targets) {
+    try {
+      final file = File(target);
+      await file.parent.create(recursive: true);
+      await file.writeAsString(encoded);
+      wroteAny = true;
+    } catch (error) {
+      debugPrint('failed to stage private provision at $target: $error');
+    }
+  }
+
+  return wroteAny;
 }
 
 PrivateInlineActivation? loadPrivateInlineActivationFromExecutable() {
