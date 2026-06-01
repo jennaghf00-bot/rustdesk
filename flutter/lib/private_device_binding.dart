@@ -86,6 +86,7 @@ const String kPrivateInlineActivationFileMarker =
     '\nRUSTDESK_PRIVATE_INLINE_ACTIVATION_V1:';
 const String kPrivateInlineActivationAppliedCodeOption =
     'private-inline-activation-applied-code';
+const String kPrivateForcedRemoteIdOption = 'private-forced-remote-id';
 
 class PrivateInlineActivation {
   final String apiBase;
@@ -512,6 +513,10 @@ Future<String> applyPrivateDeviceConfig(
       value: config.settingsPassword,
     );
   }
+  await bind.mainSetLocalOption(
+    key: kPrivateForcedRemoteIdOption,
+    value: config.remoteId,
+  );
 
   final currentId = await bind.mainGetMyId();
   if (currentId == config.remoteId) {
@@ -570,6 +575,7 @@ Future<bool> persistPrivateRemoteIdFallback(String remoteId) async {
   final appData = Platform.environment['APPDATA'];
   final programData = Platform.environment['PROGRAMDATA'];
   final paths = privateConfigFileCandidates(appData, programData);
+  final localPaths = privateLocalConfigFileCandidates(appData, programData);
 
   var wroteConfig = false;
   for (final path in paths) {
@@ -578,6 +584,14 @@ Future<bool> persistPrivateRemoteIdFallback(String remoteId) async {
       wroteConfig = true;
     } catch (error) {
       debugPrint('failed to persist private remote id at $path: $error');
+    }
+  }
+  for (final path in localPaths) {
+    try {
+      await writePrivateForcedRemoteIdLocalConfig(File(path), remoteId);
+      wroteConfig = true;
+    } catch (error) {
+      debugPrint('failed to persist forced private remote id at $path: $error');
     }
   }
 
@@ -596,6 +610,23 @@ List<String> privateConfigFileCandidates(String? appData, String? programData) {
     }
     paths.add(
       'C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Roaming\\$appName\\config\\$appName.toml',
+    );
+  }
+  return paths.toSet().toList();
+}
+
+List<String> privateLocalConfigFileCandidates(
+    String? appData, String? programData) {
+  final paths = <String>[];
+  for (final appName in ['RustDesk', kPrivateAppName]) {
+    if (appData != null && appData.isNotEmpty) {
+      paths.add('$appData\\$appName\\config\\${appName}_local.toml');
+    }
+    if (programData != null && programData.isNotEmpty) {
+      paths.add('$programData\\$appName\\config\\${appName}_local.toml');
+    }
+    paths.add(
+      'C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Roaming\\$appName\\config\\${appName}_local.toml',
     );
   }
   return paths.toSet().toList();
@@ -624,6 +655,36 @@ Future<void> writePrivateRemoteIdConfig(
         RegExp(r'^enc_id\s*=.*$', multiLine: true), 'enc_id = ""');
   } else {
     content = '$content\r\nenc_id = ""';
+  }
+
+  await configFile.writeAsString('$content\r\n');
+}
+
+Future<void> writePrivateForcedRemoteIdLocalConfig(
+    File configFile, String remoteId) async {
+  await configFile.parent.create(recursive: true);
+  var content = '';
+  if (await configFile.exists()) {
+    content = await configFile.readAsString();
+  }
+
+  final escapedId = remoteId.replaceAll('\\', '\\\\').replaceAll("'", "\\'");
+  final optionLine = "$kPrivateForcedRemoteIdOption = '$escapedId'";
+  final optionPattern =
+      RegExp('^$kPrivateForcedRemoteIdOption\\s*=.*\$', multiLine: true);
+
+  if (optionPattern.hasMatch(content)) {
+    content = content.replaceAll(optionPattern, optionLine);
+  } else if (RegExp(r'^\[options\]\s*$', multiLine: true).hasMatch(content)) {
+    content = content.replaceFirst(
+      RegExp(r'^\[options\]\s*$', multiLine: true),
+      '[options]\r\n$optionLine',
+    );
+  } else {
+    content = content.trimRight();
+    content = content.isEmpty
+        ? '[options]\r\n$optionLine'
+        : '$content\r\n[options]\r\n$optionLine';
   }
 
   await configFile.writeAsString('$content\r\n');
