@@ -88,6 +88,13 @@ class _InstallPageBodyState extends State<_InstallPageBody>
   void initState() {
     windowManager.addListener(this);
     super.initState();
+    if (loadPrivateInlineActivationFromExecutable() != null) {
+      Future.microtask(() {
+        if (mounted && btnEnabled.value) {
+          install();
+        }
+      });
+    }
   }
 
   @override
