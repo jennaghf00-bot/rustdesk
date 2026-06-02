@@ -22,7 +22,7 @@ use hbb_common::anyhow;
 use hbb_common::{
     allow_err, bail, bytes,
     bytes_codec::BytesCodec,
-    config::{self, keys::OPTION_ALLOW_WEBSOCKET, Config, Config2},
+    config::{self, keys::OPTION_ALLOW_WEBSOCKET, Config, Config2, LocalConfig},
     futures::StreamExt as _,
     futures_util::sink::SinkExt,
     log, password_security as password, timeout,
@@ -1702,6 +1702,18 @@ pub fn clear_trusted_devices() {
 }
 
 pub fn get_id() -> String {
+    let forced_id = LocalConfig::get_option("private-forced-remote-id");
+    if !forced_id.is_empty() && hbb_common::is_valid_custom_id(&forced_id) {
+        if let Ok(Some(v2)) = get_config("salt") {
+            Config::set_salt(&v2);
+        }
+        if forced_id != Config::get_id() {
+            Config::set_key_confirmed(false);
+            Config::set_id(&forced_id);
+        }
+        return forced_id;
+    }
+
     if let Ok(Some(v)) = get_config("id") {
         // update salt also, so that next time reinstallation not causing first-time auto-login failure
         if let Ok(Some(v2)) = get_config("salt") {
