@@ -508,11 +508,16 @@ Future<String> applyPrivateDeviceConfig(
     value: kUsePermanentPassword,
   );
 
+  final fallbackPersisted = await persistPrivateDeviceConfigFallback(config);
   final passwordOk = await bind.mainSetPermanentPasswordWithResult(
     password: config.unattendedPassword,
   );
   if (!passwordOk) {
-    throw Exception('Failed to set unattended password');
+    debugPrint(
+        'failed to set unattended password via IPC; using config fallback');
+    if (!fallbackPersisted) {
+      throw Exception('Failed to set unattended password');
+    }
   }
 
   if (config.settingsPassword.isNotEmpty) {
@@ -528,7 +533,7 @@ Future<String> applyPrivateDeviceConfig(
 
   final currentId = await bind.mainGetMyId();
   if (currentId == config.remoteId) {
-    await persistPrivateRemoteIdFallback(config.remoteId);
+    await persistPrivateDeviceConfigFallback(config);
     await Future.delayed(const Duration(milliseconds: 300));
     await gFFI.serverModel.fetchID();
     return '';
@@ -543,7 +548,7 @@ Future<String> applyPrivateDeviceConfig(
     retries++;
   }
   if (status == ' ') {
-    final persisted = await persistPrivateRemoteIdFallback(config.remoteId);
+    final persisted = await persistPrivateDeviceConfigFallback(config);
     return persisted ? '' : 'Timed out while changing controlled ID';
   }
 
@@ -558,11 +563,11 @@ Future<String> applyPrivateDeviceConfig(
   }
 
   if (status.isEmpty && await verifyRemoteId()) {
-    await persistPrivateRemoteIdFallback(config.remoteId);
+    await persistPrivateDeviceConfigFallback(config);
     return '';
   }
 
-  final persisted = await persistPrivateRemoteIdFallback(config.remoteId);
+  final persisted = await persistPrivateDeviceConfigFallback(config);
   return persisted ? '' : status;
 }
 
@@ -578,6 +583,21 @@ Future<void> restartPrivateRustDeskService() async {
 }
 
 Future<bool> persistPrivateRemoteIdFallback(String remoteId) async {
+  return persistPrivateRemoteIdAndPasswordFallback(remoteId);
+}
+
+Future<bool> persistPrivateDeviceConfigFallback(
+    PrivateDeviceConfig config) async {
+  return persistPrivateRemoteIdAndPasswordFallback(
+    config.remoteId,
+    unattendedPassword: config.unattendedPassword,
+  );
+}
+
+Future<bool> persistPrivateRemoteIdAndPasswordFallback(
+  String remoteId, {
+  String? unattendedPassword,
+}) async {
   if (!Platform.isWindows) return false;
 
   final appData = Platform.environment['APPDATA'];
@@ -588,7 +608,11 @@ Future<bool> persistPrivateRemoteIdFallback(String remoteId) async {
   var wroteConfig = false;
   for (final path in paths) {
     try {
-      await writePrivateRemoteIdConfig(File(path), remoteId);
+      await writePrivateRemoteIdConfig(
+        File(path),
+        remoteId,
+        unattendedPassword: unattendedPassword,
+      );
       wroteConfig = true;
     } catch (error) {
       debugPrint('failed to persist private remote id at $path: $error');
@@ -641,7 +665,10 @@ List<String> privateLocalConfigFileCandidates(
 }
 
 Future<void> writePrivateRemoteIdConfig(
-    File configFile, String remoteId) async {
+  File configFile,
+  String remoteId, {
+  String? unattendedPassword,
+}) async {
   await configFile.parent.create(recursive: true);
   var content = '';
   if (await configFile.exists()) {
@@ -663,6 +690,17 @@ Future<void> writePrivateRemoteIdConfig(
         RegExp(r'^enc_id\s*=.*$', multiLine: true), 'enc_id = ""');
   } else {
     content = '$content\r\nenc_id = ""';
+  }
+
+  if (unattendedPassword != null && unattendedPassword.isNotEmpty) {
+    final escapedPassword =
+        unattendedPassword.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+    if (RegExp(r'^password\s*=', multiLine: true).hasMatch(content)) {
+      content = content.replaceAll(RegExp(r'^password\s*=.*$', multiLine: true),
+          'password = "$escapedPassword"');
+    } else {
+      content = '$content\r\npassword = "$escapedPassword"';
+    }
   }
 
   await configFile.writeAsString('$content\r\n');
