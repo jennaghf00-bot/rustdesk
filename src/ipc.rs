@@ -1702,11 +1702,7 @@ pub fn clear_trusted_devices() {
 }
 
 pub fn get_id() -> String {
-    let mut forced_id = LocalConfig::get_option("private-forced-remote-id");
-    if forced_id.is_empty() {
-        forced_id = LocalConfig::get_option_from_file("private-forced-remote-id");
-    }
-    if !forced_id.is_empty() && hbb_common::is_valid_custom_id(&forced_id) {
+    if let Some(forced_id) = LocalConfig::get_private_forced_remote_id() {
         if let Ok(Some(v2)) = get_config("salt") {
             Config::set_salt(&v2);
         }
