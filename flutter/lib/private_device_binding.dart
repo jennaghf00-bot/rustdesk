@@ -114,13 +114,13 @@ Future<bool> applyPrivateProvisionIfPresent() async {
     );
     if (alreadyAppliedCode != inlineActivation.code) {
       try {
-        final config = inlineActivation.deviceConfig ??
-            await consumePrivateBindingCode(
-              normalizePrivateApiBase(inlineActivation.apiBase),
-              inlineActivation.code,
-            );
+        final apiBase = normalizePrivateApiBase(inlineActivation.apiBase);
+        final config = await resolvePrivateInlineActivationConfig(
+          inlineActivation,
+          apiBase,
+        );
         final status = await applyPrivateDeviceConfig(
-          normalizePrivateApiBase(inlineActivation.apiBase),
+          apiBase,
           config,
         );
         if (status.isNotEmpty) {
@@ -165,8 +165,10 @@ Future<bool> stagePrivateProvisionForInstalledClient(String installPath) async {
   if (inlineActivation == null) return false;
 
   final apiBase = normalizePrivateApiBase(inlineActivation.apiBase);
-  final config = inlineActivation.deviceConfig ??
-      await consumePrivateBindingCode(apiBase, inlineActivation.code);
+  final config = await resolvePrivateInlineActivationConfig(
+    inlineActivation,
+    apiBase,
+  );
   final status = await applyPrivateDeviceConfig(apiBase, config);
   if (status.isNotEmpty) {
     debugPrint('failed to apply private install provision: $status');
@@ -206,6 +208,22 @@ Future<bool> stagePrivateProvisionForInstalledClient(String installPath) async {
   }
 
   return wroteAny && status.isEmpty;
+}
+
+Future<PrivateDeviceConfig> resolvePrivateInlineActivationConfig(
+  PrivateInlineActivation inlineActivation,
+  String apiBase,
+) async {
+  try {
+    return await consumePrivateBindingCode(apiBase, inlineActivation.code);
+  } catch (error) {
+    final embeddedConfig = inlineActivation.deviceConfig;
+    if (embeddedConfig == null) rethrow;
+    debugPrint(
+      'failed to consume inline activation code; using embedded config fallback: $error',
+    );
+    return embeddedConfig;
+  }
 }
 
 PrivateInlineActivation? loadPrivateInlineActivationFromExecutable() {

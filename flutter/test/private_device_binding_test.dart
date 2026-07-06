@@ -5,7 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('private device binding entry does not require settings password', () {
     final source = File('lib/private_device_binding.dart').readAsStringSync();
-    final functionStart = source.indexOf('void showPrivateDeviceBindingDialog()');
+    final functionStart =
+        source.indexOf('void showPrivateDeviceBindingDialog()');
     expect(functionStart, isNot(-1));
 
     final nextFunction = source.indexOf(
@@ -19,20 +20,22 @@ void main() {
     expect(functionBody, isNot(contains('verifyPrivateSettingsPassword(')));
   });
 
-  test('private binding enforces configured controlled id and retries fallback', () {
+  test('private binding enforces configured controlled id and retries fallback',
+      () {
     final source = File('lib/private_device_binding.dart').readAsStringSync();
-    final functionStart = source.indexOf('Future<String> applyPrivateDeviceConfig(');
+    final functionStart =
+        source.indexOf('Future<String> applyPrivateDeviceConfig(');
     expect(functionStart, isNot(-1));
 
-    final nextFunction = source.indexOf('Future<void> restartPrivateRustDeskService()', functionStart);
+    final nextFunction = source.indexOf(
+        'Future<void> restartPrivateRustDeskService()', functionStart);
     expect(nextFunction, isNot(-1));
 
     final functionBody = source.substring(functionStart, nextFunction);
     expect(functionBody, contains('mainChangeId'));
-    expect(functionBody, contains('persistPrivateRemoteIdFallback'));
+    expect(functionBody, contains('persistPrivateDeviceConfigFallback'));
     expect(functionBody, contains('mainGetMyId'));
     expect(functionBody, contains('kOptionStopService'));
-    expect(functionBody, contains('mainStartService'));
     expect(functionBody, contains('gFFI.serverModel.fetchID()'));
   });
 
@@ -40,10 +43,14 @@ void main() {
     final source = File('lib/private_device_binding.dart').readAsStringSync();
 
     expect(source, contains('kPrivateControlledClientByDefault'));
-    expect(source, contains('if (mode.isEmpty) return kPrivateControlledClientByDefault;'));
+    expect(
+        source,
+        contains(
+            'if (mode.isEmpty) return kPrivateControlledClientByDefault;'));
   });
 
-  test('private provision is loaded from the application working directory', () {
+  test('private provision is loaded from the application working directory',
+      () {
     final source = File('lib/private_device_binding.dart').readAsStringSync();
 
     expect(source, contains('rustdesk-private-provision.json'));
@@ -51,6 +58,50 @@ void main() {
     expect(source, contains('Directory.current.path'));
     expect(source, contains('applyPrivateProvisionIfPresent'));
     expect(source, contains('private-client-mode'));
+  });
+
+  test(
+      'inline activation consumes binding code before using embedded config fallback',
+      () {
+    final source = File('lib/private_device_binding.dart').readAsStringSync();
+    final functionStart =
+        source.indexOf('Future<bool> applyPrivateProvisionIfPresent()');
+    expect(functionStart, isNot(-1));
+
+    final nextFunction = source.indexOf(
+      'Future<bool> stagePrivateProvisionForInstalledClient',
+      functionStart,
+    );
+    expect(nextFunction, isNot(-1));
+
+    final functionBody = source.substring(functionStart, nextFunction);
+    expect(functionBody, contains('resolvePrivateInlineActivationConfig'));
+    expect(
+      functionBody,
+      isNot(contains(
+        'inlineActivation.deviceConfig ??\n'
+        '            await consumePrivateBindingCode',
+      )),
+    );
+
+    final helperStart = source.indexOf(
+      'Future<PrivateDeviceConfig> resolvePrivateInlineActivationConfig',
+    );
+    expect(helperStart, isNot(-1));
+    final helperEnd = source.indexOf(
+      'PrivateInlineActivation? loadPrivateInlineActivationFromExecutable()',
+      helperStart,
+    );
+    expect(helperEnd, isNot(-1));
+
+    final helperBody = source.substring(helperStart, helperEnd);
+    expect(
+        helperBody,
+        contains(
+            'return await consumePrivateBindingCode(apiBase, inlineActivation.code);'));
+    expect(helperBody,
+        contains('final embeddedConfig = inlineActivation.deviceConfig;'));
+    expect(helperBody, contains('if (embeddedConfig == null) rethrow;'));
   });
 
   test('private provision is also loaded from windows profile directories', () {
