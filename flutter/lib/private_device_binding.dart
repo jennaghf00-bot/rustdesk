@@ -661,6 +661,9 @@ List<String> privateConfigFileCandidates(String? appData, String? programData) {
     paths.add(
       'C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Roaming\\$appName\\config\\$appName.toml',
     );
+    paths.add(
+      'C:\\Windows\\System32\\config\\systemprofile\\AppData\\Roaming\\$appName\\config\\$appName.toml',
+    );
   }
   return paths.toSet().toList();
 }
@@ -677,6 +680,9 @@ List<String> privateLocalConfigFileCandidates(
     }
     paths.add(
       'C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Roaming\\$appName\\config\\${appName}_local.toml',
+    );
+    paths.add(
+      'C:\\Windows\\System32\\config\\systemprofile\\AppData\\Roaming\\$appName\\config\\${appName}_local.toml',
     );
   }
   return paths.toSet().toList();

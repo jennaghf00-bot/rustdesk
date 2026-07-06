@@ -122,5 +122,6 @@ void main() {
     expect(source, contains(r'\config\'));
     expect(source, contains(r'\$appName.toml'));
     expect(source, contains('ServiceProfiles\\\\LocalService'));
+    expect(source, contains('System32\\\\config\\\\systemprofile'));
   });
 }
