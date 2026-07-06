@@ -36,6 +36,7 @@ void main() {
     expect(functionBody, contains('persistPrivateDeviceConfigFallback'));
     expect(functionBody, contains('mainGetMyId'));
     expect(functionBody, contains('kOptionStopService'));
+    expect(functionBody, contains('restartPrivateRustDeskService'));
     expect(functionBody, contains('gFFI.serverModel.fetchID()'));
   });
 

@@ -549,6 +549,9 @@ Future<String> applyPrivateDeviceConfig(
     value: config.remoteId,
   );
 
+  await restartPrivateRustDeskService();
+  await Future.delayed(const Duration(milliseconds: 800));
+
   final currentId = await bind.mainGetMyId();
   if (currentId == config.remoteId) {
     await persistPrivateDeviceConfigFallback(config);
