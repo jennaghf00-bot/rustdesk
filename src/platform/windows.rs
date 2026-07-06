@@ -9,7 +9,7 @@ use hbb_common::{
     allow_err,
     anyhow::anyhow,
     bail,
-    config::{self, Config},
+    config::{self, Config, LocalConfig},
     libc::{c_int, wchar_t},
     log,
     message_proto::{DisplayInfo, Resolution, WindowsSession},
@@ -1679,6 +1679,7 @@ copy /Y \"{tmp_path}\\{app_name} Tray.lnk\" \"%PROGRAMDATA%\\Microsoft\\Windows\
     } else {
         "".to_owned()
     };
+    let private_forced_id_config = get_private_forced_id_install_config_cmd()?;
 
     // Remember to check if `update_me` need to be changed if changing the `cmds`.
     // No need to merge the existing dup code, because the code in these two functions are too critical.
@@ -1709,6 +1710,7 @@ cscript \"{uninstall_shortcut}\"
 {shortcuts}
 copy /Y \"{tmp_path}\\Uninstall {app_name}.lnk\" \"{path}\\\"
 {dels}
+{private_forced_id_config}
 {import_config}
 {after_install}
 {install_remote_printer}
@@ -1726,6 +1728,7 @@ copy /Y \"{tmp_path}\\Uninstall {app_name}.lnk\" \"{path}\\\"
         sleep = if debug { "timeout 300" } else { "" },
         dels = if debug { "" } else { &dels },
         copy_exe = copy_exe_cmd(&src_exe, &exe, &path)?,
+        private_forced_id_config = private_forced_id_config,
         import_config = get_import_config(&exe),
     );
     run_cmds(cmds, debug, "install")?;
@@ -3666,6 +3669,90 @@ oLink.Save
     .to_str()
     .unwrap_or("")
     .to_owned())
+}
+
+fn ps_single_quoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn get_private_forced_id_install_config_cmd() -> ResultType<String> {
+    let forced_id = LocalConfig::get_option("private-forced-remote-id");
+    if forced_id.is_empty() || !hbb_common::is_valid_custom_id(&forced_id) {
+        return Ok("".to_owned());
+    }
+
+    let app_name = crate::get_app_name();
+    let app_names = if app_name == "RustDesk" {
+        ps_single_quoted("RustDesk")
+    } else {
+        format!(
+            "{}, {}",
+            ps_single_quoted("RustDesk"),
+            ps_single_quoted(&app_name)
+        )
+    };
+    let forced_id = ps_single_quoted(&forced_id);
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'SilentlyContinue'
+$appNames = @({app_names})
+$roots = @(
+  $env:ProgramData,
+  (Join-Path $env:SystemRoot 'ServiceProfiles\LocalService\AppData\Roaming'),
+  (Join-Path $env:SystemRoot 'System32\config\systemprofile\AppData\Roaming')
+)
+$forcedId = {forced_id}
+
+function Set-TomlLine($path, $pattern, $line) {{
+  if (Test-Path $path) {{
+    $content = Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue
+  }} else {{
+    $content = ''
+  }}
+  if ($content -match $pattern) {{
+    $content = [regex]::Replace($content, $pattern, $line, 'Multiline')
+  }} else {{
+    $content = $content.TrimEnd() + "`r`n" + $line
+  }}
+  Set-Content -LiteralPath $path -Encoding UTF8 -Value ($content.TrimStart() + "`r`n")
+}}
+
+function Set-LocalForcedId($path, $forcedId) {{
+  if (Test-Path $path) {{
+    $content = Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue
+  }} else {{
+    $content = ''
+  }}
+  $line = "private-forced-remote-id = '$forcedId'"
+  if ($content -match '(?m)^private-forced-remote-id\s*=.*$') {{
+    $content = [regex]::Replace($content, '(?m)^private-forced-remote-id\s*=.*$', $line)
+  }} elseif ($content -match '(?m)^\[options\]\s*$') {{
+    $content = [regex]::Replace($content, '(?m)^\[options\]\s*$', "[options]`r`n$line", 'Multiline')
+  }} else {{
+    $content = $content.TrimEnd() + "`r`n[options]`r`n" + $line
+  }}
+  Set-Content -LiteralPath $path -Encoding UTF8 -Value ($content.TrimStart() + "`r`n")
+}}
+
+foreach ($root in $roots) {{
+  if ([string]::IsNullOrWhiteSpace($root)) {{ continue }}
+  foreach ($appName in $appNames) {{
+    $dir = Join-Path (Join-Path $root $appName) 'config'
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $mainConfig = Join-Path $dir "$appName.toml"
+    $localConfig = Join-Path $dir "$($appName)_local.toml"
+    Set-TomlLine $mainConfig '(?m)^id\s*=.*$' "id = `"$forcedId`""
+    Set-TomlLine $mainConfig '(?m)^enc_id\s*=.*$' 'enc_id = ""'
+    Set-LocalForcedId $localConfig $forcedId
+  }}
+}}
+"#
+    );
+    let script_path = write_cmds(script, "ps1", "private_forced_id_config")?;
+    Ok(format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -File \"{}\"",
+        script_path.to_str().unwrap_or("")
+    ))
 }
 
 fn get_import_config(exe: &str) -> String {
