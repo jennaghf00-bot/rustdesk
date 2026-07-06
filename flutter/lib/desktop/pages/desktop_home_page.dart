@@ -103,7 +103,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '众博信AOI远程连接',
+                  'RustDesk',
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
