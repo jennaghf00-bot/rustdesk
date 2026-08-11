@@ -307,10 +307,17 @@ void runConnectionManagerScreen() async {
 
 bool _isCmReadyToShow = false;
 
+Size _connectionManagerWindowSize() {
+  return bind.isIncomingOnly()
+      ? kPrivateConnectionNoticeWindowSize
+      : kConnectionManagerWindowSizeClosedChat;
+}
+
 showCmWindow({bool isStartup = false}) async {
+  final windowSize = _connectionManagerWindowSize();
   if (isStartup) {
-    WindowOptions windowOptions = getHiddenTitleBarWindowOptions(
-        size: kConnectionManagerWindowSizeClosedChat, alwaysOnTop: true);
+    WindowOptions windowOptions =
+        getHiddenTitleBarWindowOptions(size: windowSize, alwaysOnTop: true);
     await windowManager.waitUntilReadyToShow(windowOptions, null);
     bind.mainHideDock();
     await Future.wait([
@@ -319,25 +326,24 @@ showCmWindow({bool isStartup = false}) async {
       windowManager.setOpacity(1)
     ]);
     // ensure initial window size to be changed
-    await windowManager.setSizeAlignment(
-        kConnectionManagerWindowSizeClosedChat, Alignment.topRight);
+    await windowManager.setSizeAlignment(windowSize, Alignment.topRight);
     _isCmReadyToShow = true;
   } else if (_isCmReadyToShow) {
     if (await windowManager.getOpacity() != 1) {
       await windowManager.setOpacity(1);
       await windowManager.focus();
       await windowManager.minimize(); //needed
-      await windowManager.setSizeAlignment(
-          kConnectionManagerWindowSizeClosedChat, Alignment.topRight);
+      await windowManager.setSizeAlignment(windowSize, Alignment.topRight);
       windowOnTop(null);
     }
   }
 }
 
 hideCmWindow({bool isStartup = false}) async {
+  final windowSize = _connectionManagerWindowSize();
   if (isStartup) {
-    WindowOptions windowOptions = getHiddenTitleBarWindowOptions(
-        size: kConnectionManagerWindowSizeClosedChat);
+    WindowOptions windowOptions =
+        getHiddenTitleBarWindowOptions(size: windowSize);
     windowManager.setOpacity(0);
     await windowManager.waitUntilReadyToShow(windowOptions, null);
     bind.mainHideDock();

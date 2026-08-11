@@ -82,9 +82,15 @@ class _DesktopServerPageState extends State<DesktopServerPage>
       ],
       child: Consumer<ServerModel>(
         builder: (context, serverModel, child) {
+          final isPrivateNoticeMode =
+              bind.isIncomingOnly() && serverModel.clients.isNotEmpty;
           final body = Scaffold(
             backgroundColor: Theme.of(context).colorScheme.background,
-            body: ConnectionManager(),
+            body: isPrivateNoticeMode
+                ? PrivateIncomingConnectionNotice(
+                    client: serverModel.clients.last,
+                  )
+                : ConnectionManager(),
           );
           return isLinux
               ? buildVirtualWindowFrame(context, body)
@@ -103,6 +109,69 @@ class _DesktopServerPageState extends State<DesktopServerPage>
 
   @override
   bool get wantKeepAlive => true;
+}
+
+class PrivateIncomingConnectionNotice extends StatelessWidget {
+  final Client client;
+
+  const PrivateIncomingConnectionNotice({Key? key, required this.client})
+      : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final name = client.name.trim().isEmpty ? client.peerId : client.name;
+    final peer =
+        client.peerId.trim().isEmpty ? translate('Connected') : client.peerId;
+
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border.all(color: MyTheme.color(context).border!),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
+        children: [
+          Container(
+            width: 9,
+            height: 9,
+            decoration: const BoxDecoration(
+              color: Color(0xff32bea6),
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '远程维护已连接',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  name == peer ? peer : '$name  $peer',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.textTheme.bodySmall?.color?.withOpacity(0.72),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class ConnectionManager extends StatefulWidget {
