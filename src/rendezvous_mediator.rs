@@ -336,6 +336,8 @@ impl RendezvousMediator {
                     crate::private_provision::heartbeat(&self.private_identity);
                 }
                 if rpr.request_pk {
+                    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                    crate::private_provision::reset_registration();
                     log::info!("request_pk received from {}", self.host);
                     self.register_pk(sink).await?;
                 }

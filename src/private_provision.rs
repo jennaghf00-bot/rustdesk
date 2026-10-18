@@ -63,7 +63,10 @@ pub fn apply(request: &ProvisionRequest) -> ResultType<ServiceReceipt> {
             receipt()
         }
         Err(error) => {
-            rejected("configuration_incomplete");
+            let complete = Config::private_binding_identity()
+                .map(|(_, complete)| complete)
+                .unwrap_or(false);
+            REGISTRATION.lock().unwrap().configuration_failed(complete);
             Err(error)
         }
     }

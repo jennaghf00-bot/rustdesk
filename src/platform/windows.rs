@@ -1679,7 +1679,7 @@ copy /Y \"{tmp_path}\\{app_name} Tray.lnk\" \"%PROGRAMDATA%\\Microsoft\\Windows\
     } else {
         "".to_owned()
     };
-    let private_forced_id_config = get_private_provision_install_config_cmd(&path)?;
+    let private_provision_config = get_private_provision_install_config_cmd(&path)?;
 
     // Remember to check if `update_me` need to be changed if changing the `cmds`.
     // No need to merge the existing dup code, because the code in these two functions are too critical.
@@ -1710,7 +1710,7 @@ cscript \"{uninstall_shortcut}\"
 {shortcuts}
 copy /Y \"{tmp_path}\\Uninstall {app_name}.lnk\" \"{path}\\\"
 {dels}
-{private_forced_id_config}
+{private_provision_config}
 {import_config}
 {after_install}
 {install_remote_printer}
@@ -1728,7 +1728,7 @@ copy /Y \"{tmp_path}\\Uninstall {app_name}.lnk\" \"{path}\\\"
         sleep = if debug { "timeout 300" } else { "" },
         dels = if debug { "" } else { &dels },
         copy_exe = copy_exe_cmd(&src_exe, &exe, &path)?,
-        private_forced_id_config = private_forced_id_config,
+        private_provision_config = private_provision_config,
         import_config = get_import_config(&exe),
     );
     run_cmds(cmds, debug, "install")?;
@@ -3680,6 +3680,8 @@ fn get_private_provision_install_config_cmd(install_path: &str) -> ResultType<St
     Ok(format!(
         r#"
 copy /Y "{source}" "{target}"
+if errorlevel 1 exit /B 1
+icacls "{target}" /reset
 if errorlevel 1 exit /B 1
 icacls "{target}" /inheritance:r /grant:r "*S-1-5-18:F" "*S-1-5-32-544:F"
 if errorlevel 1 exit /B 1
