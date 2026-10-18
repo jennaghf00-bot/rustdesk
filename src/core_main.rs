@@ -483,6 +483,12 @@ pub fn core_main() -> Option<Vec<String>> {
                 }
             }
             return None;
+        } else if args[0] == "--private-binding-receipt" {
+            #[cfg(feature = "flutter")]
+            println!("{}", crate::flutter_ffi::main_private_binding_receipt());
+            #[cfg(not(feature = "flutter"))]
+            println!("{}", r#"{"errorCode":"private_service_unsupported"}"#);
+            return None;
         } else if args[0] == "--get-id" {
             println!("{}", crate::ipc::get_id());
             return None;
@@ -972,6 +978,7 @@ fn is_user_main_ipc_scope_cli_command(args: &[String]) -> bool {
         Some("--password")
             | Some("--set-unlock-pin")
             | Some("--get-id")
+            | Some("--private-binding-receipt")
             | Some("--set-id")
             | Some("--config")
             | Some("--option")
@@ -1013,6 +1020,13 @@ mod tests {
         ] {
             assert!(!is_user_main_ipc_scope_cli_command(&args(&[command])));
         }
+    }
+
+    #[test]
+    fn private_binding_receipt_uses_management_command_routing() {
+        assert!(is_user_main_ipc_scope_cli_command(&args(&[
+            "--private-binding-receipt",
+        ])));
     }
 }
 
