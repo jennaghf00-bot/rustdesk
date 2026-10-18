@@ -333,6 +333,12 @@ pub enum Data {
     SAS,
     UserSid(Option<u32>),
     OnlineStatus(Option<(i64, bool)>),
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    PrivateProvisionApply(config::provision::ProvisionRequest),
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    PrivateBindingReceipt,
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    PrivateProvisionResult(Result<config::registration::ServiceReceipt, String>),
     Config((String, Option<String>)),
     Options(Option<HashMap<String, String>>),
     NatType(Option<i32>),
@@ -715,6 +721,20 @@ impl Drop for CheckIfRestart {
 
 async fn handle(data: Data, stream: &mut Connection) {
     match data {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        Data::PrivateProvisionApply(request) => {
+            let result = tokio::task::spawn_blocking(move || crate::private_provision::apply(&request)
+                .map_err(|error| error.to_string())).await
+                .unwrap_or_else(|_| Err("private_service_internal_error".into()));
+            allow_err!(stream.send(&Data::PrivateProvisionResult(result)).await);
+        }
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        Data::PrivateBindingReceipt => {
+            let result = tokio::task::spawn_blocking(|| crate::private_provision::receipt()
+                .map_err(|error| error.to_string())).await
+                .unwrap_or_else(|_| Err("private_service_internal_error".into()));
+            allow_err!(stream.send(&Data::PrivateProvisionResult(result)).await);
+        }
         Data::SystemInfo(_) => {
             let info = format!(
                 "log_path: {}, config: {}, username: {}",
@@ -1699,6 +1719,20 @@ pub fn remove_trusted_devices(hwids: Vec<Bytes>) {
 pub fn clear_trusted_devices() {
     Config::clear_trusted_devices();
     allow_err!(set_data(&Data::ClearTrustedDevices));
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub async fn private_binding_request(request: Option<config::provision::ProvisionRequest>) -> ResultType<config::registration::ServiceReceipt> {
+    let mut connection = connect(3000, "").await?;
+    match request {
+        Some(request) => connection.send(&Data::PrivateProvisionApply(request)).await?,
+        None => connection.send(&Data::PrivateBindingReceipt).await?,
+    }
+    match connection.next_timeout(15_000).await? {
+        Some(Data::PrivateProvisionResult(Ok(receipt))) => Ok(receipt),
+        Some(Data::PrivateProvisionResult(Err(error))) => bail!(error),
+        _ => bail!("private_service_receipt_missing"),
+    }
 }
 
 pub fn get_id() -> String {

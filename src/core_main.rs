@@ -32,7 +32,20 @@ pub fn core_main() -> Option<Vec<String>> {
     if !crate::common::global_init() {
         return None;
     }
+    #[cfg(windows)]
+    if std::env::args().any(|arg| arg == "--service" || arg == "--server")
+        && crate::platform::is_cur_exe_the_installed()
+    {
+        config::Config::enable_private_service_identity();
+    }
     crate::load_custom_client();
+    #[cfg(windows)]
+    if config::Config::private_service_identity_enabled() {
+        if let Err(error) = crate::private_provision::initialize_installed_service() {
+            // Keep IPC available for diagnosis; registration is separately gated below.
+            eprintln!("Private service initialization failed: {error}");
+        }
+    }
     #[cfg(windows)]
     if !crate::platform::windows::bootstrap() {
         // return None to terminate the process

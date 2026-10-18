@@ -72,16 +72,35 @@ pub struct RendezvousMediator {
     host: String,
     host_prefix: String,
     keep_alive: i32,
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    private_identity: Option<config::registration::IdentityContext>,
+    transport: &'static str,
 }
 
 impl RendezvousMediator {
     pub fn restart() {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        crate::private_provision::reset_registration();
         SHOULD_EXIT.store(true, Ordering::SeqCst);
         MANUAL_RESTARTED.store(true, Ordering::SeqCst);
         log::info!("server restart");
     }
 
     pub async fn start_all() {
+        if Config::private_service_identity_enabled() {
+            // Blocking disk/DPAPI work stays off the async executor, before registration.
+            match tokio::task::spawn_blocking(|| {
+                let pair = Config::prepare_private_identity()?;
+                Config::set_key_confirmed(false);
+                Ok::<_, hbb_common::anyhow::Error>(pair)
+            }).await {
+                Ok(Ok(_)) => {}
+                _ => {
+                    log::error!("identity_recovery_required: private registration blocked");
+                    return;
+                }
+            }
+        }
         crate::test_nat_type();
         if config::is_outgoing_only() {
             loop {
@@ -187,6 +206,9 @@ impl RendezvousMediator {
             host: host.clone(),
             host_prefix: Self::get_host_prefix(&host),
             keep_alive: crate::DEFAULT_KEEP_ALIVE,
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            private_identity: private_registration_identity().await?,
+            transport: "udp",
         };
 
         let mut timer = crate::rustdesk_interval(interval(crate::TIMER_OUT));
@@ -309,6 +331,10 @@ impl RendezvousMediator {
         match msg {
             Some(rendezvous_message::Union::RegisterPeerResponse(rpr)) => {
                 update_latency();
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                if !rpr.request_pk {
+                    crate::private_provision::heartbeat(&self.private_identity);
+                }
                 if rpr.request_pk {
                     log::info!("request_pk received from {}", self.host);
                     self.register_pk(sink).await?;
@@ -318,15 +344,21 @@ impl RendezvousMediator {
                 update_latency();
                 match rpr.result.enum_value() {
                     Ok(register_pk_response::Result::OK) => {
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        crate::private_provision::accepted(&self.private_identity, self.transport);
                         Config::set_key_confirmed(true);
                         Config::set_host_key_confirmed(&self.host_prefix, true);
                         *SOLVING_PK_MISMATCH.lock().await = "".to_owned();
                         NEEDS_DEPLOY.store(false, Ordering::SeqCst);
                     }
                     Ok(register_pk_response::Result::UUID_MISMATCH) => {
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        crate::private_provision::rejected("identity_mismatch");
                         self.handle_uuid_mismatch(sink).await?;
                     }
                     Ok(register_pk_response::Result::NOT_DEPLOYED) => {
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        crate::private_provision::rejected("not_deployed");
                         if !NEEDS_DEPLOY.load(Ordering::SeqCst) {
                             log::warn!("Server requires deployment. Run `rustdesk --deploy --token <api_token>` on this device.");
                         }
@@ -338,6 +370,8 @@ impl RendezvousMediator {
                         Config::set_host_key_confirmed(&self.host_prefix, false);
                     }
                     _ => {
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        crate::private_provision::rejected("registration_rejected");
                         log::error!("unknown RegisterPkResponse");
                     }
                 }
@@ -394,6 +428,9 @@ impl RendezvousMediator {
             host: host.clone(),
             host_prefix: Self::get_host_prefix(&host),
             keep_alive: crate::DEFAULT_KEEP_ALIVE,
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            private_identity: private_registration_identity().await?,
+            transport: "tcp",
         };
         let mut timer = crate::rustdesk_interval(interval(crate::TIMER_OUT));
         let mut last_register_sent: Option<Instant> = None;
@@ -722,6 +759,7 @@ impl RendezvousMediator {
     }
 
     async fn register_pk(&mut self, socket: Sink<'_>) -> ResultType<()> {
+        ensure_private_registration_complete().await?;
         // Throttle register_pk when the device is awaiting deployment: server
         // already told us we're not in its db; sending more often than every
         // DEPLOY_RETRY_INTERVAL ms is wasted traffic until the operator runs
@@ -769,6 +807,7 @@ impl RendezvousMediator {
     }
 
     async fn register_peer(&mut self, socket: Sink<'_>) -> ResultType<()> {
+        ensure_private_registration_complete().await?;
         let solving = SOLVING_PK_MISMATCH.lock().await;
         if !(solving.is_empty() || *solving == self.host) {
             return Ok(());
@@ -808,6 +847,22 @@ impl RendezvousMediator {
         }
         relay_server
     }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+async fn private_registration_identity() -> ResultType<Option<config::registration::IdentityContext>> {
+    if !Config::private_service_identity_enabled() { return Ok(None); }
+    let (identity, _) = tokio::task::spawn_blocking(Config::private_binding_identity).await??;
+    Ok(Some(identity))
+}
+
+async fn ensure_private_registration_complete() -> ResultType<()> {
+    if Config::private_service_identity_enabled() {
+        let allowed = tokio::task::spawn_blocking(|| Config::private_provision_store()
+            .map(|store| store.registration_allowed())).await??;
+        if !allowed { bail!("configuration_incomplete"); }
+    }
+    Ok(())
 }
 
 fn get_direct_port() -> i32 {

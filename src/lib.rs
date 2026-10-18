@@ -21,6 +21,8 @@ pub use self::rendezvous_mediator::*;
 pub mod common;
 #[cfg(not(any(target_os = "ios")))]
 pub mod ipc;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod private_provision;
 #[cfg(not(any(
     target_os = "android",
     target_os = "ios",

@@ -2,127 +2,36 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+// Architecture guards only. Behavioral receipt tests live in private_binding_receipt_test.dart.
 void main() {
-  test('private device binding entry does not require settings password', () {
+  test('first binding entry does not require the settings password', () {
     final source = File('lib/private_device_binding.dart').readAsStringSync();
-    final functionStart =
-        source.indexOf('void showPrivateDeviceBindingDialog()');
-    expect(functionStart, isNot(-1));
-
-    final nextFunction = source.indexOf(
-      'Future<PrivateDeviceConfig> consumePrivateBindingCode',
-      functionStart,
-    );
-    expect(nextFunction, isNot(-1));
-
-    final functionBody = source.substring(functionStart, nextFunction);
-    expect(functionBody, isNot(contains('hasPrivateSettingsPassword()')));
-    expect(functionBody, isNot(contains('verifyPrivateSettingsPassword(')));
+    final start = source.indexOf('void showPrivateDeviceBindingDialog()');
+    final end = source.indexOf(
+        'Future<PrivateDeviceConfig> consumePrivateBindingCode', start);
+    expect(start >= 0 && end > start, isTrue);
+    final body = source.substring(start, end);
+    expect(body.contains('hasPrivateSettingsPassword()'), isFalse);
+    expect(body.contains('verifyPrivateSettingsPassword('), isFalse);
   });
 
-  test('private binding enforces configured controlled id and retries fallback',
-      () {
+  test('controlled mode remains the default', () {
     final source = File('lib/private_device_binding.dart').readAsStringSync();
-    final functionStart =
-        source.indexOf('Future<String> applyPrivateDeviceConfig(');
-    expect(functionStart, isNot(-1));
-
-    final nextFunction = source.indexOf(
-        'Future<void> restartPrivateRustDeskService()', functionStart);
-    expect(nextFunction, isNot(-1));
-
-    final functionBody = source.substring(functionStart, nextFunction);
-    expect(functionBody, contains('mainChangeId'));
-    expect(functionBody, contains('persistPrivateDeviceConfigFallback'));
-    expect(functionBody, contains('mainGetMyId'));
-    expect(functionBody, contains('kOptionStopService'));
-    expect(functionBody, contains('restartPrivateRustDeskService'));
-    expect(functionBody, contains('gFFI.serverModel.fetchID()'));
-  });
-
-  test('private client defaults to controlled mode without provision json', () {
-    final source = File('lib/private_device_binding.dart').readAsStringSync();
-
-    expect(source, contains('kPrivateControlledClientByDefault'));
+    expect(source.contains('kPrivateControlledClientByDefault'), isTrue);
     expect(
-        source,
-        contains(
-            'if (mode.isEmpty) return kPrivateControlledClientByDefault;'));
-  });
-
-  test('private provision is loaded from the application working directory',
-      () {
-    final source = File('lib/private_device_binding.dart').readAsStringSync();
-
-    expect(source, contains('rustdesk-private-provision.json'));
-    expect(source, contains('--zbxcfg-'));
-    expect(source, contains('Directory.current.path'));
-    expect(source, contains('applyPrivateProvisionIfPresent'));
-    expect(source, contains('private-client-mode'));
+        source.contains(
+            'if (mode.isEmpty) return kPrivateControlledClientByDefault;'),
+        isTrue);
   });
 
   test(
-      'inline activation consumes binding code before using embedded config fallback',
+      'GUI cannot regain cross-profile config writes or restart during binding',
       () {
     final source = File('lib/private_device_binding.dart').readAsStringSync();
-    final functionStart =
-        source.indexOf('Future<bool> applyPrivateProvisionIfPresent()');
-    expect(functionStart, isNot(-1));
-
-    final nextFunction = source.indexOf(
-      'Future<bool> stagePrivateProvisionForInstalledClient',
-      functionStart,
-    );
-    expect(nextFunction, isNot(-1));
-
-    final functionBody = source.substring(functionStart, nextFunction);
-    expect(functionBody, contains('resolvePrivateInlineActivationConfig'));
-    expect(
-      functionBody,
-      isNot(contains(
-        'inlineActivation.deviceConfig ??\n'
-        '            await consumePrivateBindingCode',
-      )),
-    );
-
-    final helperStart = source.indexOf(
-      'Future<PrivateDeviceConfig> resolvePrivateInlineActivationConfig',
-    );
-    expect(helperStart, isNot(-1));
-    final helperEnd = source.indexOf(
-      'PrivateInlineActivation? loadPrivateInlineActivationFromExecutable()',
-      helperStart,
-    );
-    expect(helperEnd, isNot(-1));
-
-    final helperBody = source.substring(helperStart, helperEnd);
-    expect(
-        helperBody,
-        contains(
-            'return await consumePrivateBindingCode(apiBase, inlineActivation.code);'));
-    expect(helperBody,
-        contains('final embeddedConfig = inlineActivation.deviceConfig;'));
-    expect(helperBody, contains('if (embeddedConfig == null) rethrow;'));
-  });
-
-  test('private provision is also loaded from windows profile directories', () {
-    final source = File('lib/private_device_binding.dart').readAsStringSync();
-
-    expect(source, contains('Platform.environment'));
-    expect(source, contains('APPDATA'));
-    expect(source, contains('LOCALAPPDATA'));
-    expect(source, contains('Programs'));
-    expect(source, contains('ProgramFiles'));
-  });
-
-  test('private remote id fallback writes renamed app config paths', () {
-    final source = File('lib/private_device_binding.dart').readAsStringSync();
-
-    expect(source, contains('kPrivateAppName'));
-    expect(source, contains('privateConfigFileCandidates'));
-    expect(source, contains(r'\config\'));
-    expect(source, contains(r'\$appName.toml'));
-    expect(source, contains('ServiceProfiles\\\\LocalService'));
-    expect(source, contains('System32\\\\config\\\\systemprofile'));
+    expect(source.contains('persistPrivateDeviceConfigFallback'), isFalse);
+    expect(source.contains('writePrivateRemoteIdConfig'), isFalse);
+    expect(source.contains('Directory.current'), isFalse);
+    expect(source.contains('mainStopService'), isFalse);
+    expect(source.contains('mainChangeId'), isFalse);
   });
 }

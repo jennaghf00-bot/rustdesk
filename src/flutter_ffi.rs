@@ -1749,6 +1749,54 @@ pub fn main_set_permanent_password_with_result(password: String) -> bool {
     ui_interface::set_permanent_password_with_result(password)
 }
 
+pub fn main_private_binding_receipt() -> String {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let result = {
+        // FRB 1.80 calls this on its synchronous worker pool, not a Tokio executor.
+        if hbb_common::tokio::runtime::Handle::try_current().is_ok() {
+            return r#"{"errorCode":"private_service_runtime_context"}"#.into();
+        }
+        match hbb_common::tokio::runtime::Builder::new_current_thread().enable_all().build() {
+            Ok(runtime) => runtime.block_on(crate::ipc::private_binding_request(None)),
+            Err(_) => Err(hbb_common::anyhow::anyhow!("private_service_runtime_unavailable")),
+        }
+    };
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let result: ResultType<config::registration::ServiceReceipt> = Err(hbb_common::anyhow::anyhow!("private_service_unsupported"));
+    match result {
+        Ok(receipt) => serde_json::to_string(&receipt).unwrap_or_default(),
+        Err(_) => r#"{"errorCode":"private_service_unavailable"}"#.into(),
+    }
+}
+
+pub fn main_apply_private_provision(request_json: String) -> String {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let request = serde_json::from_str::<config::provision::ProvisionRequest>(&request_json);
+        if let Ok(request) = request {
+            if hbb_common::tokio::runtime::Handle::try_current().is_ok() {
+                return r#"{"errorCode":"private_service_runtime_context"}"#.into();
+            }
+            let result = match hbb_common::tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                Ok(runtime) => runtime.block_on(crate::ipc::private_binding_request(Some(request))),
+                Err(_) => Err(hbb_common::anyhow::anyhow!("private_service_runtime_unavailable")),
+            };
+            return match result {
+                Ok(receipt) => serde_json::to_string(&receipt).unwrap_or_default(),
+                Err(error) => serde_json::json!({"errorCode": error.to_string()}).to_string(),
+            };
+        }
+    }
+    r#"{"errorCode":"provision_config_invalid"}"#.into()
+}
+
+pub fn main_stage_private_provision(request_json: String, install_path: String) -> bool {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    return crate::private_provision::stage(&request_json, &install_path).is_ok();
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    false
+}
+
 pub fn main_get_fingerprint() -> String {
     get_fingerprint()
 }

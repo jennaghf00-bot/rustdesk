@@ -1,11 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'private_binding_receipt.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common.dart';
-import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
-import 'package:flutter_hbb/models/server_model.dart';
 import 'package:flutter_hbb/utils/http_service.dart' as http;
 
 class PrivateDeviceConfig {
@@ -50,31 +50,6 @@ class PrivateDeviceConfig {
       };
 }
 
-class PrivateProvisionConfig {
-  final String apiBase;
-  final PrivateDeviceConfig deviceConfig;
-
-  PrivateProvisionConfig({
-    required this.apiBase,
-    required this.deviceConfig,
-  });
-
-  factory PrivateProvisionConfig.fromJson(Map<String, dynamic> json) {
-    return PrivateProvisionConfig(
-      apiBase: json['apiBase'] as String? ?? '',
-      deviceConfig: PrivateDeviceConfig.fromJson(json),
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-        'mode': kPrivateClientModeControlled,
-        'appName': kPrivateAppName,
-        'apiBase': apiBase,
-        ...deviceConfig.toJson(),
-      };
-}
-
-const String kPrivateProvisionFileName = 'rustdesk-private-provision.json';
 const String kPrivateClientModeOption = 'private-client-mode';
 const String kPrivateClientModeControlled = 'controlled';
 const bool kPrivateControlledClientByDefault = true;
@@ -84,8 +59,6 @@ const String kPrivateInlineActivationEnvKey =
     'RUSTDESK_PRIVATE_INLINE_ACTIVATION';
 const String kPrivateInlineActivationFileMarker =
     '\nRUSTDESK_PRIVATE_INLINE_ACTIVATION_V1:';
-const String kPrivateInlineActivationAppliedCodeOption =
-    'private-inline-activation-applied-code';
 const String kPrivateForcedRemoteIdOption = 'private-forced-remote-id';
 
 class PrivateInlineActivation {
@@ -107,107 +80,39 @@ bool isPrivateControlledClient() {
 }
 
 Future<bool> applyPrivateProvisionIfPresent() async {
-  final inlineActivation = loadPrivateInlineActivationFromExecutable();
-  if (inlineActivation != null) {
-    final alreadyAppliedCode = bind.mainGetLocalOption(
-      key: kPrivateInlineActivationAppliedCodeOption,
+  if (!bind.mainIsInstalled()) return isPrivateControlledClient();
+
+  // Installed service startup applies its protected sidecar. Opening the GUI is read-only.
+  final receipt = PrivateServiceReceipt.decode(
+    await bind.mainPrivateBindingReceipt(),
+  );
+  if (receipt.persisted && receipt.actualId.isNotEmpty) {
+    await bind.mainSetLocalOption(
+      key: kPrivateForcedRemoteIdOption,
+      value: receipt.actualId,
     );
-    if (alreadyAppliedCode != inlineActivation.code) {
-      try {
-        final apiBase = normalizePrivateApiBase(inlineActivation.apiBase);
-        final config = await resolvePrivateInlineActivationConfig(
-          inlineActivation,
-          apiBase,
-        );
-        final status = await applyPrivateDeviceConfig(
-          apiBase,
-          config,
-        );
-        if (status.isNotEmpty) {
-          debugPrint('failed to apply inline activation payload: $status');
-          return false;
-        }
-        await bind.mainSetLocalOption(
-          key: kPrivateInlineActivationAppliedCodeOption,
-          value: inlineActivation.code,
-        );
-        await bind.mainSetLocalOption(
-          key: kPrivateClientModeOption,
-          value: kPrivateClientModeControlled,
-        );
-        return true;
-      } catch (error) {
-        debugPrint('failed to consume inline activation payload: $error');
-      }
-    }
   }
-
-  final provision = await loadPrivateProvisionConfig();
-  if (provision == null) return isPrivateControlledClient();
-
-  final status = await applyPrivateDeviceConfig(
-    normalizePrivateApiBase(provision.apiBase),
-    provision.deviceConfig,
-  );
-  if (status.isNotEmpty) {
-    debugPrint('failed to apply private provision: $status');
-    return false;
-  }
-  await bind.mainSetLocalOption(
-    key: kPrivateClientModeOption,
-    value: kPrivateClientModeControlled,
-  );
-  return true;
+  return isPrivateControlledClient();
 }
 
 Future<bool> stagePrivateProvisionForInstalledClient(String installPath) async {
-  final inlineActivation = loadPrivateInlineActivationFromExecutable();
-  if (inlineActivation == null) return false;
-
-  final apiBase = normalizePrivateApiBase(inlineActivation.apiBase);
-  final config = await resolvePrivateInlineActivationConfig(
-    inlineActivation,
-    apiBase,
+  final activation = loadPrivateInlineActivationFromExecutable();
+  if (activation == null) return false;
+  final apiBase = normalizePrivateApiBase(activation.apiBase);
+  final config =
+      await resolvePrivateInlineActivationConfig(activation, apiBase);
+  final staged = await bind.mainStagePrivateProvision(
+    requestJson: jsonEncode({'apiBase': apiBase, ...config.toJson()}),
+    installPath: installPath,
   );
-  final status = await applyPrivateDeviceConfig(apiBase, config);
-  if (status.isNotEmpty) {
-    debugPrint('failed to apply private install provision: $status');
+  if (!staged) throw Exception('Failed to stage private install provision');
+  if (config.settingsPassword.isNotEmpty) {
+    await bind.mainSetLocalOption(
+      key: kPrivateSettingsPasswordOption,
+      value: config.settingsPassword,
+    );
   }
-  await bind.mainSetLocalOption(
-    key: kPrivateClientModeOption,
-    value: kPrivateClientModeControlled,
-  );
-  await bind.mainSetLocalOption(
-    key: kPrivateInlineActivationAppliedCodeOption,
-    value: inlineActivation.code,
-  );
-
-  final provision = PrivateProvisionConfig(
-    apiBase: apiBase,
-    deviceConfig: config,
-  );
-  final encoded =
-      const JsonEncoder.withIndent('  ').convert(provision.toJson());
-
-  final targets = {
-    if (installPath.trim().isNotEmpty)
-      '${installPath.trim().replaceAll('/', Platform.pathSeparator)}${Platform.pathSeparator}$kPrivateProvisionFileName',
-    ...privateProvisionCandidateFiles().map((file) => file.path),
-  };
-
-  var wroteAny = false;
-  for (final target in targets) {
-    try {
-      final file = File(target);
-      await file.parent.create(recursive: true);
-      await file.writeAsString(encoded);
-      wroteAny = true;
-    } catch (error) {
-      debugPrint('failed to stage private provision at $target: $error');
-    }
-  }
-
-  return wroteAny && status.isEmpty;
+  return true;
 }
 
 Future<PrivateDeviceConfig> resolvePrivateInlineActivationConfig(
@@ -304,62 +209,6 @@ int lastIndexOfBytes(List<int> haystack, List<int> needle) {
   return -1;
 }
 
-Future<PrivateProvisionConfig?> loadPrivateProvisionConfig() async {
-  for (final file in privateProvisionCandidateFiles()) {
-    try {
-      if (!await file.exists()) continue;
-      final decoded = jsonDecode(await file.readAsString());
-      if (decoded is Map<String, dynamic>) {
-        return PrivateProvisionConfig.fromJson(decoded);
-      }
-    } catch (error) {
-      debugPrint('failed to read private provision ${file.path}: $error');
-    }
-  }
-  return null;
-}
-
-List<File> privateProvisionCandidateFiles() {
-  final candidates = <String>[
-    '${Directory.current.path}${Platform.pathSeparator}$kPrivateProvisionFileName',
-  ];
-  final executableDir = parentPath(Platform.resolvedExecutable);
-  if (executableDir.isNotEmpty) {
-    candidates.add(
-        '$executableDir${Platform.pathSeparator}$kPrivateProvisionFileName');
-  }
-  final environment = Platform.environment;
-  for (final key in [
-    'APPDATA',
-    'LOCALAPPDATA',
-    'ProgramFiles',
-    'ProgramFiles(x86)',
-  ]) {
-    final root = environment[key];
-    if (root == null || root.isEmpty) continue;
-    for (final appName in ['RustDesk', kPrivateAppName]) {
-      candidates.add(
-        '$root${Platform.pathSeparator}$appName${Platform.pathSeparator}$kPrivateProvisionFileName',
-      );
-    }
-    if (key == 'LOCALAPPDATA') {
-      for (final appName in ['RustDesk', kPrivateAppName]) {
-        candidates.add(
-          '$root${Platform.pathSeparator}Programs${Platform.pathSeparator}$appName${Platform.pathSeparator}$kPrivateProvisionFileName',
-        );
-      }
-    }
-  }
-  return candidates.toSet().map(File.new).toList();
-}
-
-String parentPath(String path) {
-  final normalized = path.replaceAll('\\', Platform.pathSeparator);
-  final index = normalized.lastIndexOf(Platform.pathSeparator);
-  if (index <= 0) return '';
-  return normalized.substring(0, index);
-}
-
 void showPrivateDeviceBindingDialog() {
   final apiController = TextEditingController();
   final codeController = TextEditingController();
@@ -385,7 +234,16 @@ void showPrivateDeviceBindingDialog() {
 
       try {
         final config = await consumePrivateBindingCode(apiBase, code);
-        final idStatus = await applyPrivateDeviceConfig(apiBase, config);
+        var idStatus = await applyPrivateDeviceConfig(apiBase, config);
+        while (idStatus == 'provision_authorization_required') {
+          final authorization = await requestPrivateBindingAuthorization();
+          if (authorization == null) break;
+          idStatus = await applyPrivateDeviceConfig(
+            apiBase,
+            config,
+            authorization: authorization,
+          );
+        }
         if (idStatus.isNotEmpty) {
           setState(() {
             isInProgress = false;
@@ -447,6 +305,34 @@ void showPrivateDeviceBindingDialog() {
   });
 }
 
+Future<String?> requestPrivateBindingAuthorization() {
+  final result = Completer<String?>();
+  final controller = TextEditingController();
+  gFFI.dialogManager.show((setState, close, context) {
+    void finish(String? password) {
+      if (!result.isCompleted) result.complete(password);
+      close();
+    }
+
+    return CustomAlertDialog(
+      title: const Text('Secondary password'),
+      content: TextField(
+        controller: controller,
+        obscureText: true,
+        autofocus: true,
+        decoration: const InputDecoration(labelText: 'Secondary password'),
+      ).workaroundFreezeLinuxMint(),
+      actions: [
+        dialogButton('Cancel', onPressed: () => finish(null), isOutline: true),
+        dialogButton('OK', onPressed: () => finish(controller.text)),
+      ],
+      onSubmit: () => finish(controller.text),
+      onCancel: () => finish(null),
+    );
+  });
+  return result.future.whenComplete(controller.dispose);
+}
+
 Future<PrivateDeviceConfig> consumePrivateBindingCode(
   String apiBase,
   String code,
@@ -503,264 +389,39 @@ String bindingErrorMessage(String body) {
 
 Future<String> applyPrivateDeviceConfig(
   String apiBase,
-  PrivateDeviceConfig config,
-) async {
-  if (config.remoteId.isEmpty ||
-      config.unattendedPassword.isEmpty ||
-      config.hbbsAddress.isEmpty) {
-    throw Exception('Binding config is incomplete');
-  }
-
-  await bind.mainSetOption(key: 'private-management-api', value: apiBase);
-  await bind.mainSetOption(
-    key: 'custom-rendezvous-server',
-    value: config.hbbsAddress,
-  );
-  await bind.mainSetOption(key: 'relay-server', value: config.hbbrAddress);
-  await bind.mainSetOption(key: 'key', value: config.serverKey);
-  await bind.mainSetOption(key: kOptionEnablePrivacyMode, value: 'N');
-  await bind.mainSetOption(key: kOptionApproveMode, value: 'password');
-  await bind.mainSetOption(key: kOptionStopService, value: 'N');
-  await bind.mainSetOption(
-    key: kOptionVerificationMethod,
-    value: kUsePermanentPassword,
-  );
-
-  final fallbackPersisted = await persistPrivateDeviceConfigFallback(config);
-  final passwordOk = await bind.mainSetPermanentPasswordWithResult(
-    password: config.unattendedPassword,
-  );
-  if (!passwordOk) {
-    debugPrint(
-        'failed to set unattended password via IPC; using config fallback');
-    if (!fallbackPersisted) {
-      throw Exception('Failed to set unattended password');
-    }
-  }
-
-  if (config.settingsPassword.isNotEmpty) {
-    await bind.mainSetLocalOption(
-      key: kPrivateSettingsPasswordOption,
-      value: config.settingsPassword,
-    );
-  }
-  await bind.mainSetLocalOption(
-    key: kPrivateForcedRemoteIdOption,
-    value: config.remoteId,
-  );
-
-  await restartPrivateRustDeskService();
-  await Future.delayed(const Duration(milliseconds: 800));
-
-  final currentId = await bind.mainGetMyId();
-  if (currentId == config.remoteId) {
-    await persistPrivateDeviceConfigFallback(config);
-    await Future.delayed(const Duration(milliseconds: 300));
-    await gFFI.serverModel.fetchID();
-    return '';
-  }
-
-  bind.mainChangeId(newId: config.remoteId);
-  var status = await bind.mainGetAsyncStatus();
-  var retries = 0;
-  while (status == ' ' && retries < 300) {
-    await Future.delayed(const Duration(milliseconds: 100));
-    status = await bind.mainGetAsyncStatus();
-    retries++;
-  }
-  if (status == ' ') {
-    final persisted = await persistPrivateDeviceConfigFallback(config);
-    return persisted ? '' : 'Timed out while changing controlled ID';
-  }
-
-  Future<bool> verifyRemoteId() async {
-    await Future.delayed(const Duration(milliseconds: 600));
-    final changedId = await bind.mainGetMyId();
-    if (changedId == config.remoteId) {
-      await gFFI.serverModel.fetchID();
-      return true;
-    }
-    return false;
-  }
-
-  if (status.isEmpty && await verifyRemoteId()) {
-    await persistPrivateDeviceConfigFallback(config);
-    return '';
-  }
-
-  final persisted = await persistPrivateDeviceConfigFallback(config);
-  return persisted ? '' : status;
-}
-
-Future<void> restartPrivateRustDeskService() async {
-  try {
-    await bind.mainStopService();
-    await Future.delayed(const Duration(milliseconds: 500));
-    await bind.mainStartService();
-  } catch (error) {
-    debugPrint(
-        'failed to restart RustDesk service after private binding: $error');
-  }
-}
-
-Future<bool> persistPrivateRemoteIdFallback(String remoteId) async {
-  return persistPrivateRemoteIdAndPasswordFallback(remoteId);
-}
-
-Future<bool> persistPrivateDeviceConfigFallback(
-    PrivateDeviceConfig config) async {
-  return persistPrivateRemoteIdAndPasswordFallback(
-    config.remoteId,
-    unattendedPassword: config.unattendedPassword,
-  );
-}
-
-Future<bool> persistPrivateRemoteIdAndPasswordFallback(
-  String remoteId, {
-  String? unattendedPassword,
+  PrivateDeviceConfig config, {
+  String authorization = '',
 }) async {
-  if (!Platform.isWindows) return false;
-
-  final appData = Platform.environment['APPDATA'];
-  final programData = Platform.environment['PROGRAMDATA'];
-  final paths = privateConfigFileCandidates(appData, programData);
-  final localPaths = privateLocalConfigFileCandidates(appData, programData);
-
-  var wroteConfig = false;
-  for (final path in paths) {
-    try {
-      await writePrivateRemoteIdConfig(
-        File(path),
-        remoteId,
-        unattendedPassword: unattendedPassword,
+  final status = await verifyPrivateBinding(
+    expectedId: config.remoteId,
+    apply: () => bind.mainApplyPrivateProvision(
+      requestJson: jsonEncode({
+        'apiBase': apiBase,
+        ...config.toJson(),
+        'authorization': authorization,
+      }),
+    ),
+    readReceipt: () => bind.mainPrivateBindingReceipt(),
+  );
+  if (status.isEmpty || status == 'configured_offline') {
+    final receipt = PrivateServiceReceipt.decode(
+      await bind.mainPrivateBindingReceipt(),
+    );
+    if (receipt.persisted && receipt.actualId == config.remoteId) {
+      await bind.mainSetLocalOption(
+        key: kPrivateForcedRemoteIdOption,
+        value: receipt.actualId,
       );
-      wroteConfig = true;
-    } catch (error) {
-      debugPrint('failed to persist private remote id at $path: $error');
+      if (config.settingsPassword.isNotEmpty) {
+        await bind.mainSetLocalOption(
+          key: kPrivateSettingsPasswordOption,
+          value: config.settingsPassword,
+        );
+      }
+      await gFFI.serverModel.fetchID();
     }
   }
-  for (final path in localPaths) {
-    try {
-      await writePrivateForcedRemoteIdLocalConfig(File(path), remoteId);
-      wroteConfig = true;
-    } catch (error) {
-      debugPrint('failed to persist forced private remote id at $path: $error');
-    }
-  }
-
-  if (!wroteConfig) return false;
-  return true;
-}
-
-List<String> privateConfigFileCandidates(String? appData, String? programData) {
-  final paths = <String>[];
-  for (final appName in ['RustDesk', kPrivateAppName]) {
-    if (appData != null && appData.isNotEmpty) {
-      paths.add('$appData\\$appName\\config\\$appName.toml');
-    }
-    if (programData != null && programData.isNotEmpty) {
-      paths.add('$programData\\$appName\\config\\$appName.toml');
-    }
-    paths.add(
-      'C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Roaming\\$appName\\config\\$appName.toml',
-    );
-    paths.add(
-      'C:\\Windows\\System32\\config\\systemprofile\\AppData\\Roaming\\$appName\\config\\$appName.toml',
-    );
-  }
-  return paths.toSet().toList();
-}
-
-List<String> privateLocalConfigFileCandidates(
-    String? appData, String? programData) {
-  final paths = <String>[];
-  for (final appName in ['RustDesk', kPrivateAppName]) {
-    if (appData != null && appData.isNotEmpty) {
-      paths.add('$appData\\$appName\\config\\${appName}_local.toml');
-    }
-    if (programData != null && programData.isNotEmpty) {
-      paths.add('$programData\\$appName\\config\\${appName}_local.toml');
-    }
-    paths.add(
-      'C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Roaming\\$appName\\config\\${appName}_local.toml',
-    );
-    paths.add(
-      'C:\\Windows\\System32\\config\\systemprofile\\AppData\\Roaming\\$appName\\config\\${appName}_local.toml',
-    );
-  }
-  return paths.toSet().toList();
-}
-
-Future<void> writePrivateRemoteIdConfig(
-  File configFile,
-  String remoteId, {
-  String? unattendedPassword,
-}) async {
-  await configFile.parent.create(recursive: true);
-  var content = '';
-  if (await configFile.exists()) {
-    content = await configFile.readAsString();
-  }
-
-  final escapedId = remoteId.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
-  if (RegExp(r'^id\s*=', multiLine: true).hasMatch(content)) {
-    content = content.replaceAll(
-        RegExp(r'^id\s*=.*$', multiLine: true), 'id = "$escapedId"');
-  } else {
-    content = content.trimRight();
-    content =
-        content.isEmpty ? 'id = "$escapedId"' : '$content\r\nid = "$escapedId"';
-  }
-
-  if (RegExp(r'^enc_id\s*=', multiLine: true).hasMatch(content)) {
-    content = content.replaceAll(
-        RegExp(r'^enc_id\s*=.*$', multiLine: true), 'enc_id = ""');
-  } else {
-    content = '$content\r\nenc_id = ""';
-  }
-
-  if (unattendedPassword != null && unattendedPassword.isNotEmpty) {
-    final escapedPassword =
-        unattendedPassword.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
-    if (RegExp(r'^password\s*=', multiLine: true).hasMatch(content)) {
-      content = content.replaceAll(RegExp(r'^password\s*=.*$', multiLine: true),
-          'password = "$escapedPassword"');
-    } else {
-      content = '$content\r\npassword = "$escapedPassword"';
-    }
-  }
-
-  await configFile.writeAsString('$content\r\n');
-}
-
-Future<void> writePrivateForcedRemoteIdLocalConfig(
-    File configFile, String remoteId) async {
-  await configFile.parent.create(recursive: true);
-  var content = '';
-  if (await configFile.exists()) {
-    content = await configFile.readAsString();
-  }
-
-  final escapedId = remoteId.replaceAll('\\', '\\\\').replaceAll("'", "\\'");
-  final optionLine = "$kPrivateForcedRemoteIdOption = '$escapedId'";
-  final optionPattern =
-      RegExp('^$kPrivateForcedRemoteIdOption\\s*=.*\$', multiLine: true);
-
-  if (optionPattern.hasMatch(content)) {
-    content = content.replaceAll(optionPattern, optionLine);
-  } else if (RegExp(r'^\[options\]\s*$', multiLine: true).hasMatch(content)) {
-    content = content.replaceFirst(
-      RegExp(r'^\[options\]\s*$', multiLine: true),
-      '[options]\r\n$optionLine',
-    );
-  } else {
-    content = content.trimRight();
-    content = content.isEmpty
-        ? '[options]\r\n$optionLine'
-        : '$content\r\n[options]\r\n$optionLine';
-  }
-
-  await configFile.writeAsString('$content\r\n');
+  return status;
 }
 
 const String kPrivateSettingsPasswordOption = 'private-settings-password';

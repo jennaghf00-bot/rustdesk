@@ -270,6 +270,10 @@ class _InstallPageBodyState extends State<_InstallPageBody>
         await stagePrivateProvisionForInstalledClient(controller.text);
       } catch (error) {
         debugPrint('failed to stage private provision before install: $error');
+        btnEnabled.value = true;
+        showProgress.value = false;
+        showToast('Failed to stage private install provision');
+        return;
       }
       bind.installInstallMe(options: args, path: controller.text);
     }
