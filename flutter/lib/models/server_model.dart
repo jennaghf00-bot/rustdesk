@@ -15,6 +15,8 @@ import '../common/formatter/id_formatter.dart';
 import '../desktop/pages/server_page.dart' as desktop;
 import '../desktop/widgets/tabbar_widget.dart';
 import '../mobile/pages/server_page.dart';
+import '../private_binding_receipt.dart';
+import '../private_device_binding.dart';
 import 'model.dart';
 
 const kLoginDialogTag = "LOGIN";
@@ -41,6 +43,7 @@ class ServerModel with ChangeNotifier {
 
   late String _emptyIdShow;
   late final IDTextEditingController _serverId;
+  bool _fetchingId = false;
   final _serverPasswd =
       TextEditingController(text: translate("Generating ..."));
 
@@ -472,10 +475,22 @@ class ServerModel with ChangeNotifier {
   }
 
   fetchID() async {
-    final id = await bind.mainGetMyId();
-    if (id != _serverId.id) {
-      _serverId.id = id;
-      notifyListeners();
+    if (_fetchingId) return;
+    _fetchingId = true;
+    try {
+      final id = await readServerDisplayId(
+        serviceOwned: isWindows &&
+            bind.mainIsInstalled() &&
+            isPrivateControlledClient(),
+        readReceipt: () => bind.mainPrivateBindingReceipt(),
+        readLegacyId: () => bind.mainGetMyId(),
+      );
+      if (id != _serverId.id) {
+        _serverId.id = id;
+        notifyListeners();
+      }
+    } finally {
+      _fetchingId = false;
     }
   }
 

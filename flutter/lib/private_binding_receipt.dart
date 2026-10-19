@@ -38,6 +38,25 @@ class PrivateServiceReceipt {
   }
 }
 
+Future<String> readServerDisplayId({
+  required bool serviceOwned,
+  required Future<String> Function() readReceipt,
+  required Future<String> Function() readLegacyId,
+}) async {
+  if (!serviceOwned) return readLegacyId();
+  try {
+    final receipt = PrivateServiceReceipt.decode(await readReceipt());
+    if (receipt._value['version'] == 1 &&
+        receipt.persisted &&
+        receipt.generation.isNotEmpty &&
+        receipt.fingerprint.isNotEmpty) {
+      // An offline service still owns its saved ID; this is not binding success.
+      return receipt.actualId;
+    }
+  } catch (_) {}
+  return '';
+}
+
 Future<String> verifyPrivateBinding({
   required String expectedId,
   required Future<String> Function() apply,
