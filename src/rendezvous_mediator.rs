@@ -8,6 +8,10 @@ use std::{
 };
 
 use uuid::Uuid;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod retry_policy;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod private_tcp;
 
 use hbb_common::{
     allow_err,
@@ -74,6 +78,8 @@ pub struct RendezvousMediator {
     keep_alive: i32,
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     private_identity: Option<config::registration::IdentityContext>,
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    private_udp_probe: Option<retry_policy::UdpProbe>,
     transport: &'static str,
 }
 
@@ -96,6 +102,8 @@ impl RendezvousMediator {
             }).await {
                 Ok(Ok(_)) => {}
                 _ => {
+                    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                    crate::private_provision::rejected("identity_recovery_required");
                     log::error!("identity_recovery_required: private registration blocked");
                     return;
                 }
@@ -208,6 +216,10 @@ impl RendezvousMediator {
             keep_alive: crate::DEFAULT_KEEP_ALIVE,
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             private_identity: private_registration_identity().await?,
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            private_udp_probe: if Config::private_service_identity_enabled() {
+                Some(retry_policy::UdpProbe::new(Instant::now()))
+            } else { None },
             transport: "udp",
         };
 
@@ -272,12 +284,19 @@ impl RendezvousMediator {
                     if SHOULD_EXIT.load(Ordering::SeqCst) {
                         break;
                     }
+                    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                    if rz.private_udp_probe.as_ref().map(|probe| probe.expired(Instant::now())).unwrap_or(false) {
+                        if NEEDS_DEPLOY.load(Ordering::SeqCst) { bail!("not_deployed"); }
+                        bail!("udp_unavailable");
+                    }
                     // The server already told us this device is not deployed. Skip
                     // the whole register / fails / latency / UDP-rebind path until
                     // DEPLOY_RETRY_INTERVAL elapses, otherwise the loop spins every
                     // few seconds (log spam + misapplied network-recovery rebind)
                     // until the operator runs `rustdesk --deploy`.
                     if deploy_register_throttled().await {
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        if rz.private_udp_probe.is_some() && last_register_sent.is_none() { bail!("not_deployed"); }
                         continue;
                     }
                     let now = Some(Instant::now());
@@ -333,9 +352,15 @@ impl RendezvousMediator {
                 update_latency();
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 if !rpr.request_pk {
+                    if let Some(probe) = self.private_udp_probe.as_mut() { probe.heartbeat(Instant::now()); }
                     crate::private_provision::heartbeat(&self.private_identity);
                 }
                 if rpr.request_pk {
+                    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                    if let Some(probe) = self.private_udp_probe.as_mut() {
+                        probe.require_registration(Instant::now());
+                        Config::set_key_confirmed(false);
+                    }
                     #[cfg(not(any(target_os = "android", target_os = "ios")))]
                     crate::private_provision::reset_registration();
                     log::info!("request_pk received from {}", self.host);
@@ -349,6 +374,8 @@ impl RendezvousMediator {
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
                         crate::private_provision::accepted(&self.private_identity, self.transport);
                         Config::set_key_confirmed(true);
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        if let Some(probe) = self.private_udp_probe.as_mut() { probe.accepted(Instant::now()); }
                         Config::set_host_key_confirmed(&self.host_prefix, true);
                         *SOLVING_PK_MISMATCH.lock().await = "".to_owned();
                         NEEDS_DEPLOY.store(false, Ordering::SeqCst);
@@ -356,6 +383,8 @@ impl RendezvousMediator {
                     Ok(register_pk_response::Result::UUID_MISMATCH) => {
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
                         crate::private_provision::rejected("identity_mismatch");
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        if self.private_identity.is_some() { bail!("identity_mismatch"); }
                         self.handle_uuid_mismatch(sink).await?;
                     }
                     Ok(register_pk_response::Result::NOT_DEPLOYED) => {
@@ -370,6 +399,8 @@ impl RendezvousMediator {
                         // was deleted by an admin while running.
                         Config::set_key_confirmed(false);
                         Config::set_host_key_confirmed(&self.host_prefix, false);
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        if self.private_identity.is_some() { bail!("not_deployed"); }
                     }
                     _ => {
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -432,6 +463,8 @@ impl RendezvousMediator {
             keep_alive: crate::DEFAULT_KEEP_ALIVE,
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             private_identity: private_registration_identity().await?,
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            private_udp_probe: None,
             transport: "tcp",
         };
         let mut timer = crate::rustdesk_interval(interval(crate::TIMER_OUT));
@@ -482,6 +515,11 @@ impl RendezvousMediator {
 
     pub async fn start(server: ServerPtr, host: String) -> ResultType<()> {
         log::info!("start rendezvous mediator of {}", host);
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        if Config::private_service_identity_enabled() && !use_ws()
+            && !host.starts_with("ws://") && !host.starts_with("wss://") {
+            return Self::start_private(server, host).await;
+        }
         //If the investment agent type is http or https, then tcp forwarding is enabled.
         if (cfg!(debug_assertions) && option_env!("TEST_TCP").is_some())
             || Config::is_proxy()
