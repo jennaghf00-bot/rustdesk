@@ -61,6 +61,31 @@ fn write_meta(dir: &Path, ts: u64) {
     }
 }
 
+fn private_install_dir(shared_cache: &Path) -> std::io::Result<PathBuf> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let parent = shared_cache.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "private extraction parent missing",
+        )
+    })?;
+    let root = parent.join("rustdesk-private-installs");
+    std::fs::create_dir_all(&root)?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?
+        .as_nanos();
+    let dir = root.join(format!(
+        "{}-{now}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir(&dir)?;
+    Ok(dir)
+}
+
 fn setup(
     reader: BinaryReader,
     dir: Option<PathBuf>,
@@ -81,6 +106,20 @@ fn setup(
         }
     };
 
+    // A private installer must never reuse another process's DLLs or device footer.
+    let private_install = private_inline_activation.is_some();
+    let dir = if private_install {
+        match private_install_dir(&dir) {
+            Ok(dir) => dir,
+            Err(error) => {
+                eprintln!("private extraction directory failed: {error}");
+                return None;
+            }
+        }
+    } else {
+        dir
+    };
+
     let mut ts = 0;
     if clear || !is_timestamp_matches(&dir, &mut ts) {
         #[cfg(windows)]
@@ -88,10 +127,15 @@ fn setup(
             *_ui = true;
             ui::setup();
         }
-        std::fs::remove_dir_all(&dir).ok();
+        if !private_install {
+            std::fs::remove_dir_all(&dir).ok();
+        }
     }
     for file in reader.files.iter() {
-        file.write_to_file(&dir);
+        if let Err(error) = file.write_to_file(&dir) {
+            eprintln!("extraction failed for {}: {error}", file.path);
+            return None;
+        }
     }
     write_meta(&dir, ts);
     #[cfg(windows)]
@@ -100,7 +144,10 @@ fn setup(
     reader.configure_permission(&dir);
     let executable = dir.join(&reader.exe);
     if let Some(payload) = private_inline_activation {
-        persist_private_inline_activation(&executable, payload);
+        if let Err(error) = persist_private_inline_activation(&executable, payload) {
+            eprintln!("private activation staging failed: {error}");
+            return None;
+        }
     }
     Some(executable)
 }
@@ -118,16 +165,14 @@ fn private_inline_activation_from_current_exe() -> Option<String> {
     }
 }
 
-fn persist_private_inline_activation(executable: &Path, payload: &str) {
-    let Ok(mut data) = std::fs::read(executable) else {
-        return;
-    };
+fn persist_private_inline_activation(executable: &Path, payload: &str) -> std::io::Result<()> {
+    let mut data = std::fs::read(executable)?;
     if let Some(marker) = find_last_subslice(&data, PRIVATE_INLINE_ACTIVATION_MARKER) {
         data.truncate(marker);
     }
     data.extend_from_slice(PRIVATE_INLINE_ACTIVATION_MARKER);
     data.extend_from_slice(payload.as_bytes());
-    let _ = std::fs::write(executable, data);
+    std::fs::write(executable, data)
 }
 
 fn find_last_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -266,12 +311,184 @@ fn main() {
             args = vec!["--quick_support".to_owned()];
         }
         execute(exe, args, ui, private_inline_activation.as_deref());
+    } else if private_inline_activation.is_some() {
+        #[cfg(windows)]
+        win::show_extraction_error();
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::should_click_setup;
+    use super::{setup, should_click_setup, BinaryReader};
+    use crate::bin_reader::BinaryData;
+    use std::{
+        fs,
+        io::Write,
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+    struct Fixture {
+        root: PathBuf,
+        dir: PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let root = PathBuf::from(
+                std::env::var_os("RUSTDESK_TEST_ROOT")
+                    .expect("set RUSTDESK_TEST_ROOT inside the project"),
+            );
+            assert!(root.is_absolute());
+            fs::create_dir_all(&root).unwrap();
+            let dir = root.join(format!(
+                "portable-{}-{}",
+                std::process::id(),
+                NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&dir).unwrap();
+            Self { root, dir }
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let dir = self.dir.canonicalize().unwrap();
+            let root = self.root.canonicalize().unwrap();
+            assert!(
+                dir.starts_with(root)
+                    && dir
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("portable-")
+            );
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    fn file(path: &str, contents: &[u8]) -> BinaryData {
+        let mut compressed = Vec::new();
+        {
+            let mut writer = brotli::CompressorWriter::new(&mut compressed, 4096, 5, 22);
+            writer.write_all(contents).unwrap();
+        }
+        BinaryData {
+            path: path.to_owned(),
+            raw: Box::leak(compressed.into_boxed_slice()),
+            md5_code: Box::leak(
+                format!("{:x}", md5::compute(contents))
+                    .into_bytes()
+                    .into_boxed_slice(),
+            ),
+        }
+    }
+
+    fn reader() -> BinaryReader {
+        BinaryReader {
+            files: vec![
+                file("rustdesk.exe", b"new-exe"),
+                file("librustdesk.dll", b"new-dll"),
+            ],
+            exe: "rustdesk.exe".into(),
+        }
+    }
+
+    fn extract(reader: BinaryReader, dir: PathBuf, private: Option<&str>) -> Option<PathBuf> {
+        setup(
+            reader,
+            Some(dir),
+            false,
+            &vec!["--test".into()],
+            &mut false,
+            private,
+        )
+    }
+
+    #[test]
+    fn private_installations_do_not_overwrite_each_others_payload_or_shared_cache() {
+        let fixture = Fixture::new();
+        let shared = fixture.dir.join("rustdesk");
+        fs::create_dir(&shared).unwrap();
+        fs::write(shared.join("librustdesk.dll"), b"old-dll").unwrap();
+        let first = extract(reader(), shared.clone(), Some("first-payload")).unwrap();
+        let first_bytes = fs::read(&first).unwrap();
+        let second = extract(reader(), shared.clone(), Some("second-payload")).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(fs::read(first).unwrap(), first_bytes);
+        assert_eq!(
+            fs::read(shared.join("librustdesk.dll")).unwrap(),
+            b"old-dll"
+        );
+        assert!(fs::read(second).unwrap().ends_with(b"second-payload"));
+    }
+
+    #[test]
+    fn corrupt_archive_file_never_returns_an_executable() {
+        let fixture = Fixture::new();
+        let mut broken = reader();
+        broken.files[1].md5_code = b"00000000000000000000000000000000";
+        assert!(extract(
+            broken,
+            fixture.dir.join("rustdesk"),
+            Some("fixture-payload")
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn missing_payload_target_never_returns_an_executable() {
+        let fixture = Fixture::new();
+        let mut broken = reader();
+        broken.exe = "missing.exe".into();
+        assert!(extract(
+            broken,
+            fixture.dir.join("rustdesk"),
+            Some("fixture-payload")
+        )
+        .is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_installation_ignores_a_locked_old_shared_dll() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let fixture = Fixture::new();
+        let shared = fixture.dir.join("rustdesk");
+        fs::create_dir(&shared).unwrap();
+        let old = shared.join("librustdesk.dll");
+        fs::write(&old, b"old-dll").unwrap();
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&old)
+            .unwrap();
+        let exe = extract(reader(), shared.clone(), Some("fixture-payload")).unwrap();
+        assert_ne!(exe.parent().unwrap(), shared);
+        assert_eq!(
+            fs::read(exe.parent().unwrap().join("librustdesk.dll")).unwrap(),
+            b"new-dll"
+        );
+        drop(lock);
+        assert_eq!(fs::read(old).unwrap(), b"old-dll");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_overwrite_never_returns_a_stale_executable() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let fixture = Fixture::new();
+        fs::write(fixture.dir.join("librustdesk.dll"), b"old-dll").unwrap();
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(fixture.dir.join("librustdesk.dll"))
+            .unwrap();
+        assert!(extract(reader(), fixture.dir.clone(), None).is_none());
+        drop(lock);
+    }
 
     #[test]
     fn private_inline_activation_forces_install_mode_when_filename_is_truncated() {
@@ -300,6 +517,19 @@ mod win {
     // Used for privacy mode(magnifier impl).
     pub const RUNTIME_BROKER_EXE: &'static str = "C:\\Windows\\System32\\RuntimeBroker.exe";
     pub const WIN_TOPMOST_INJECTED_PROCESS_EXE: &'static str = "RuntimeBroker_rustdesk.exe";
+
+    pub(super) fn show_extraction_error() {
+        let title: Vec<u16> = "RustDesk installation failed\0".encode_utf16().collect();
+        let message: Vec<u16> = "Client files could not be extracted or verified. The installed client was not changed. Run the installer again or contact your administrator.\0".encode_utf16().collect();
+        unsafe {
+            winapi::um::winuser::MessageBoxW(
+                std::ptr::null_mut(),
+                message.as_ptr(),
+                title.as_ptr(),
+                winapi::um::winuser::MB_OK | winapi::um::winuser::MB_ICONERROR,
+            );
+        }
+    }
 
     pub(super) fn copy_runtime_broker(dir: &Path) {
         let src = RUNTIME_BROKER_EXE;
