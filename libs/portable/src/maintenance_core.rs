@@ -291,6 +291,10 @@ impl Snapshot {
         };
         let mut total = 0u64;
         for (index, root) in roots.iter().enumerate() {
+            safe_path(root)?;
+            if !root.try_exists().map_err(|_| "snapshot_failed")? {
+                continue;
+            }
             for path in tree(root)? {
                 let meta = fs::metadata(&path).map_err(|_| "snapshot_failed")?;
                 let mut e = Saved {
@@ -353,6 +357,10 @@ impl Snapshot {
             }
         }
         for (index, root) in self.roots.iter().enumerate() {
+            safe_path(root)?;
+            if !root.try_exists().map_err(|_| "rollback_failed")? {
+                continue;
+            }
             let mut current = tree(root)?;
             current.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
             for path in current {
@@ -403,6 +411,7 @@ pub struct Target {
     pub config: PathBuf,
     pub provision: PathBuf,
     pub machine: Vec<u8>,
+    pub recovery_roots: Vec<PathBuf>,
 }
 pub struct ServiceRecord {
     pub name: String,
@@ -560,10 +569,11 @@ pub fn upgrade(
             Err(e) => Outcome::new("verification_failed", Some(e)),
         };
     }
-    let prepare = r
-        .stop()
-        .and_then(|_| verify_identity())
-        .and_then(|_| Snapshot::capture(&[t.install.clone(), t.config.clone()], backup, security));
+    let prepare = r.stop().and_then(|_| verify_identity()).and_then(|_| {
+        let mut roots = vec![t.install.clone(), t.config.clone()];
+        roots.extend(t.recovery_roots.clone());
+        Snapshot::capture(&roots, backup, security)
+    });
     let snapshot = match prepare {
         Ok(s) => s,
         Err(error) => {

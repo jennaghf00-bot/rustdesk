@@ -480,6 +480,9 @@ impl Host {
                 config,
                 provision,
                 machine,
+                // Preserve the alternate profile too, including its prior absence. Never migrate it.
+                recovery_roots: vec![windows_dir()?
+                    .join("System32/config/systemprofile/AppData/Roaming/RustDesk/config")],
             },
             original_running: status == SERVICE_RUNNING,
             record_signature: signature(&records),

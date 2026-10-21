@@ -247,6 +247,7 @@ fn transaction_fixture(f: &Fixture, id: &str) -> (Target, Payload, Baseline, Fak
         config,
         provision: p,
         machine: b"fixture-machine".to_vec(),
+        recovery_roots: vec![],
     };
     let r=FakeRuntime{running:true,fail_start:false,raw:serde_json::json!({"version":1,"actualId":id,"publicFingerprint":fp,"persisted":true,"registered":true,"generation":"fixture","errorCode":null}).to_string(),stops:0,fail_rollback_stop:false,fail_restore:false};
     let backup = f.dir.join(format!("backup-{id}"));
@@ -518,4 +519,16 @@ fn service_path_matches_rustdesk_systemprofile_compatibility_redirect() {
         expected
     );
     assert_eq!(service_config_dir(windows, "LocalSystem"), expected);
+}
+#[test]
+fn rollback_removes_new_identity_in_a_previously_absent_compatibility_directory() {
+    let f = Fixture::new();
+    let config = f.dir.join("absent-config");
+    let backup = f.dir.join("backup");
+    fs::create_dir(&backup).unwrap();
+    let snap = Snapshot::capture(&[config.clone()], &backup, &NoSecurity).unwrap();
+    fs::create_dir(&config).unwrap();
+    fs::write(config.join("RustDesk.toml"), b"unwanted-new-identity").unwrap();
+    snap.restore(&NoSecurity).unwrap();
+    assert!(!config.exists());
 }

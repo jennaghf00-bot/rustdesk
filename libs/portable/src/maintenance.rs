@@ -77,6 +77,7 @@ fn run() -> Result<()> {
             config: host.target.config.clone(),
             provision: host.target.provision.clone(),
             machine: host.target.machine.clone(),
+            recovery_roots: host.target.recovery_roots.clone(),
         };
         let b = baseline(&t.provision, &t.config, &t.machine)?;
         let prompt=format!("Upgrade this existing private RustDesk client?\n\nID: {}\nPath: {}\n\nRemote sessions and RustDesk windows may close briefly. The existing ID, passwords and service account will be preserved.\n\nDo not continue during active production work.",b.id,t.install.display());
