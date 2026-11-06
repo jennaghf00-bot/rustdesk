@@ -117,10 +117,14 @@ Future<bool> stagePrivateProvisionForInstalledClient(String installPath) async {
 
 Future<PrivateDeviceConfig> resolvePrivateInlineActivationConfig(
   PrivateInlineActivation inlineActivation,
-  String apiBase,
-) async {
+  String apiBase, {
+  Future<PrivateDeviceConfig> Function(String, String)? consume,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
   try {
-    return await consumePrivateBindingCode(apiBase, inlineActivation.code);
+    return await (consume ?? consumePrivateBindingCode)(
+            apiBase, inlineActivation.code)
+        .timeout(timeout);
   } catch (error) {
     final embeddedConfig = inlineActivation.deviceConfig;
     if (embeddedConfig == null) rethrow;

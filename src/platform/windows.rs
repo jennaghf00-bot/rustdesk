@@ -1419,7 +1419,7 @@ fn get_install_info_with_subkey(subkey: String) -> (String, String, String, Stri
 
 pub fn copy_raw_cmd(src_raw: &str, _raw: &str, _path: &str) -> ResultType<String> {
     let main_raw = format!(
-        "XCOPY \"{}\" \"{}\" /Y /E /H /C /I /K /R /Z",
+        "XCOPY \"{}\" \"{}\" /Y /E /H /I /K /R /Z\r\nif errorlevel 1 exit /B 1",
         PathBuf::from(src_raw)
             .parent()
             .ok_or(anyhow!("Can't get parent directory of {src_raw}"))?
@@ -4532,6 +4532,48 @@ pub(super) fn get_pids_with_first_arg_by_wmic<S1: AsRef<str>, S2: AsRef<str>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn install_copy_fixture(locked: bool) -> (std::path::PathBuf, std::process::Output) {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = std::path::PathBuf::from(
+            std::env::var_os("RUSTDESK_TEST_ROOT").expect("isolated fixture root is required"),
+        ).join(uuid::Uuid::new_v4().to_string());
+        let source = root.join("source files");
+        let target = root.join("target files");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(source.join("rustdesk.exe"), b"fixture executable, never executed").unwrap();
+        std::fs::write(source.join("librustdesk.dll"), b"new fixture DLL").unwrap();
+        std::fs::write(target.join("librustdesk.dll"), b"old fixture DLL").unwrap();
+        let _lock = locked.then(|| std::fs::OpenOptions::new().read(true).share_mode(1)
+            .open(target.join("librustdesk.dll")).unwrap());
+        let command = copy_raw_cmd(
+            source.join("rustdesk.exe").to_str().unwrap(), "", target.to_str().unwrap(),
+        ).unwrap();
+        let script = root.join("copy-test.cmd");
+        std::fs::write(&script, format!("@echo off\r\n{command}\r\necho copied>\"{}\"\r\n",
+            root.join("copied.marker").display())).unwrap();
+        let output = std::process::Command::new("cmd.exe").args(["/D", "/C"])
+            .arg(&script).current_dir(&root).output().unwrap();
+        (root, output)
+    }
+
+    #[test]
+    fn private_install_copy_failure_cannot_reach_success_marker() {
+        let (root, output) = install_copy_fixture(true);
+        assert!(!root.join("copied.marker").exists(),
+            "copy failure was ignored: {}", String::from_utf8_lossy(&output.stdout));
+        assert!(!output.status.success());
+        assert_eq!(std::fs::read(root.join("target files/librustdesk.dll")).unwrap(), b"old fixture DLL");
+    }
+
+    #[test]
+    fn private_install_copy_success_copies_the_new_dll() {
+        let (root, output) = install_copy_fixture(false);
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(root.join("copied.marker").exists());
+        assert_eq!(std::fs::read(root.join("target files/librustdesk.dll")).unwrap(), b"new fixture DLL");
+    }
 
     // Test-only reusable Win32 HANDLE RAII helper.
     // If a future non-test path needs the same pattern, move it out of this test module.
