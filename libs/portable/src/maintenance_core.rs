@@ -8,8 +8,14 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 pub type Result<T> = std::result::Result<T, &'static str>;
-pub const DLL_HASH: &str = "325f8178e27472918ed9dab2e886f6bbd13dbebac7087fdfc6e26e3553ade449";
-pub const ARCHIVE_HASH: &str = "cb22547a85aa2f0c21a44cb524edb1c6c5705655897e0edf66c2ff34c93c7247";
+pub const DLL_HASH: &str = "c46ac238f7b5f614f2fb89b4501a9f33895522d2b8563a361268f391dc4d42b0";
+pub const ARCHIVE_HASH: &str = "d16078bb73f25a9b483b7bdaa97814616579354b1d302077f3eaa040075872be";
+pub fn supports_receipt_build(hash: &str) -> bool {
+    [DLL_HASH,
+        "325f8178e27472918ed9dab2e886f6bbd13dbebac7087fdfc6e26e3553ade449",
+        "1c99f53048c21bc04c2e54faf65d320f02ca51e9401deb0c33d1e4800bbb1efe"]
+        .contains(&hash)
+}
 pub struct Baseline {
     pub id: String,
     pub fingerprint: String,
@@ -177,10 +183,16 @@ pub fn receipt(b: &Baseline, raw: &str) -> Result<bool> {
     if r["persisted"] != true || r["generation"].as_str().unwrap_or("").is_empty() {
         return Err("identity_not_persisted");
     }
-    if !r["errorCode"].is_null() {
+    let registered = r["registered"].as_bool().ok_or("receipt_invalid")?;
+    let transient_offline = !registered && r["phase"] == "configured_offline" && matches!(
+        r["errorCode"].as_str(),
+        Some("network_unavailable" | "udp_unavailable" | "private_tcp_handshake_timeout"
+            | "private_tcp_heartbeat_timeout" | "private_tcp_connection_lost" | "server_tcp_unsupported")
+    );
+    if !r["errorCode"].is_null() && !transient_offline {
         return Err("registration_rejected");
     }
-    r["registered"].as_bool().ok_or("receipt_invalid")
+    Ok(registered)
 }
 pub fn relative(raw: &str) -> Result<PathBuf> {
     let normalized = raw.replace('\\', "/");

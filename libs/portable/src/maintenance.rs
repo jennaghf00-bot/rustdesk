@@ -55,7 +55,7 @@ fn inspect() -> Result<()> {
     let (_, files) = archive()?;
     println!(
         "{}",
-        serde_json::json!({"release":"universal-maintenance-20261021","archiveSha256":ARCHIVE_HASH,"dllSha256":DLL_HASH,"files":files.iter().map(|(p,h)|serde_json::json!({"path":p,"sha256":h})).collect::<Vec<_>>() })
+        serde_json::json!({"release":"universal-maintenance-20261105","archiveSha256":ARCHIVE_HASH,"dllSha256":DLL_HASH,"files":files.iter().map(|(p,h)|serde_json::json!({"path":p,"sha256":h})).collect::<Vec<_>>() })
     );
     Ok(())
 }
@@ -96,7 +96,7 @@ fn run() -> Result<()> {
         let payload = Payload { stage, files };
         let outcome = upgrade(&t, &payload, &b, &backup, &WinSecurity, &mut host);
         Ok(
-            serde_json::json!({"version":1,"release":"universal-maintenance-20261021","status":outcome.status,"errorCode":outcome.error,"rollbackError":outcome.rollback_error,"originalId":b.id,"publicFingerprint":b.fingerprint,"backupDir":backup,"dllSha256":DLL_HASH}),
+            serde_json::json!({"version":1,"release":"universal-maintenance-20261105","status":outcome.status,"errorCode":outcome.error,"rollbackError":outcome.rollback_error,"originalId":b.id,"publicFingerprint":b.fingerprint,"backupDir":backup,"dllSha256":DLL_HASH}),
         )
     })();
     let value = match result {

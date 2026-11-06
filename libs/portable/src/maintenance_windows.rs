@@ -465,11 +465,7 @@ impl Host {
         let before = baseline(&provision, &config, &machine)?;
         let installed_hash = file_hash(&install.join("librustdesk.dll"))?;
         if status == SERVICE_RUNNING
-            && [
-                DLL_HASH,
-                "1c99f53048c21bc04c2e54faf65d320f02ca51e9401deb0c33d1e4800bbb1efe",
-            ]
-            .contains(&installed_hash.as_str())
+            && supports_receipt_build(&installed_hash)
         {
             // Only these known builds support this read-only flag. Never execute unknown legacy builds.
             receipt(&before, &query_receipt(&install.join("rustdesk.exe"))?)?;

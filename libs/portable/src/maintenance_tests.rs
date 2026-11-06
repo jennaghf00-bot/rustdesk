@@ -137,6 +137,43 @@ fn receipt_distinguishes_offline_from_changed_identity() {
     r["actualId"] = "OTHER".into();
     assert_eq!(receipt(&b, &r.to_string()), Err("receipt_identity_changed"));
 }
+
+#[test]
+fn transient_network_failure_keeps_verified_offline_upgrade() {
+    for code in ["network_unavailable", "udp_unavailable", "private_tcp_handshake_timeout",
+        "private_tcp_heartbeat_timeout", "private_tcp_connection_lost", "server_tcp_unsupported"] {
+        let f = Fixture::new();
+        let (t, p, b, mut r, backup) = transaction_fixture(&f, "TEST-OFFLINE");
+        let mut raw: serde_json::Value = serde_json::from_str(&r.raw).unwrap();
+        raw["registered"] = false.into();
+        raw["phase"] = "configured_offline".into();
+        raw["errorCode"] = code.into();
+        r.raw = raw.to_string();
+        let original = fs::read(t.config.join("RustDesk.toml")).unwrap();
+        let result = upgrade(&t, &p, &b, &backup, &NoSecurity, &mut r);
+        assert_eq!(result.status, "updated_offline", "{code}");
+        assert_eq!(fs::read(t.config.join("RustDesk.toml")).unwrap(), original);
+        assert_eq!(fs::read(t.install.join("librustdesk.dll")).unwrap(), b"new");
+        assert!(r.running);
+    }
+}
+
+#[test]
+fn auth_denials_are_never_reported_as_ordinary_offline() {
+    for code in ["identity_mismatch", "not_deployed", "private_tcp_server_identity_mismatch",
+        "configuration_incomplete", "unrecognized_error"] {
+        let f = Fixture::new();
+        let (t, p, b, mut r, backup) = transaction_fixture(&f, "TEST-DENIED");
+        let mut raw: serde_json::Value = serde_json::from_str(&r.raw).unwrap();
+        raw["registered"] = false.into();
+        raw["phase"] = "configured_offline".into();
+        raw["errorCode"] = code.into();
+        r.raw = raw.to_string();
+        let result = upgrade(&t, &p, &b, &backup, &NoSecurity, &mut r);
+        assert_eq!(result.status, "rolled_back", "{code}");
+        assert_eq!(fs::read(t.install.join("librustdesk.dll")).unwrap(), b"old");
+    }
+}
 #[test]
 fn rejects_unsafe_archive_paths() {
     assert_eq!(
@@ -154,6 +191,20 @@ fn rejects_unsafe_archive_paths() {
     ] {
         assert!(relative(p).is_err(), "{p}");
     }
+}
+
+#[test]
+fn unified_release_supports_only_verified_old_and_new_receipt_builds() {
+    for hash in [
+        "c46ac238f7b5f614f2fb89b4501a9f33895522d2b8563a361268f391dc4d42b0",
+        "325f8178e27472918ed9dab2e886f6bbd13dbebac7087fdfc6e26e3553ade449",
+        "1c99f53048c21bc04c2e54faf65d320f02ca51e9401deb0c33d1e4800bbb1efe",
+    ] {
+        assert!(supports_receipt_build(hash), "{hash}");
+    }
+    assert!(!supports_receipt_build("unknown-legacy-build"));
+    assert_eq!(DLL_HASH, "c46ac238f7b5f614f2fb89b4501a9f33895522d2b8563a361268f391dc4d42b0");
+    assert_eq!(ARCHIVE_HASH, "d16078bb73f25a9b483b7bdaa97814616579354b1d302077f3eaa040075872be");
 }
 #[test]
 fn snapshot_restores_files_and_removes_only_changes_inside_its_roots() {
