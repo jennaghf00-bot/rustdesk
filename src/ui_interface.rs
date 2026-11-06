@@ -103,13 +103,57 @@ pub fn goto_install() {
 }
 
 #[inline]
+#[cfg(windows)]
+fn install_completion_status(
+    result: hbb_common::ResultType<()>,
+    report_failure: impl FnOnce(),
+) -> i32 {
+    match result {
+        Ok(()) => 0,
+        Err(error) => {
+            log::error!("Installation did not complete: {error}");
+            report_failure();
+            1
+        }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod install_completion_tests {
+    use super::*;
+
+    #[test]
+    fn failed_installation_reports_failure_and_exits_unsuccessfully() {
+        let mut reported = false;
+        let status = install_completion_status(Err(hbb_common::anyhow::anyhow!("install failed")),
+            || reported = true);
+        assert_eq!(status, 1);
+        assert!(reported);
+    }
+
+    #[test]
+    fn successful_installation_does_not_show_a_failure() {
+        let mut reported = false;
+        assert_eq!(install_completion_status(Ok(()), || reported = true), 0);
+        assert!(!reported);
+    }
+}
+
+#[inline]
 pub fn install_me(_options: String, _path: String, _silent: bool, _debug: bool) {
     #[cfg(windows)]
     std::thread::spawn(move || {
-        allow_err!(crate::platform::windows::install_me(
-            &_options, _path, _silent, _debug
-        ));
-        std::process::exit(0);
+        let status = install_completion_status(
+            crate::platform::windows::install_me(&_options, _path, _silent, _debug),
+            || {
+                if !_silent {
+                    crate::platform::message_box(
+                        "RustDesk installation failed. The installation did not complete. Contact your administrator.",
+                    );
+                }
+            },
+        );
+        std::process::exit(status);
     });
 }
 
